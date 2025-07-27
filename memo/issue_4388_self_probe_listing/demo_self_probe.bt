@@ -1,0 +1,81 @@
+#!/usr/bin/env bpftrace
+
+/*
+ * Self Probe Demo Script
+ * 
+ * このスクリプトは self:signal:SIGUSR1 の動作を実演します。
+ * 
+ * 使用方法:
+ * 1. sudo bpftrace demo_self_probe.bt
+ * 2. 別のターミナルで: kill -SIGUSR1 <bpftrace_pid>
+ * 3. 統計情報が表示されます
+ */
+
+BEGIN {
+    printf("Self probe demo started (PID: %d)\n", pid);
+    printf("Send SIGUSR1 to see current statistics: kill -SIGUSR1 %d\n", pid);
+    printf("Press Ctrl+C to exit\n\n");
+}
+
+// システムコールの統計を収集
+tracepoint:syscalls:sys_enter_openat {
+    @openat_count = count();
+    @openat_by_comm[comm] = count();
+}
+
+tracepoint:syscalls:sys_enter_read {
+    @read_count = count();
+    @read_by_comm[comm] = count();
+}
+
+tracepoint:syscalls:sys_enter_write {
+    @write_count = count();
+    @write_by_comm[comm] = count();
+}
+
+// プロセス作成の監視
+tracepoint:syscalls:sys_enter_clone* {
+    @clone_count = count();
+    @clone_by_comm[comm] = count();
+}
+
+// SIGUSR1を受信したら統計を表示
+self:signal:SIGUSR1 {
+    time();
+    printf("=== CURRENT SYSTEM STATISTICS ===\n");
+    
+    printf("\n--- System Call Counts ---\n");
+    printf("openat() calls: %d\n", @openat_count);
+    printf("read() calls: %d\n", @read_count);
+    printf("write() calls: %d\n", @write_count);
+    printf("clone*() calls: %d\n", @clone_count);
+    
+    printf("\n--- Top 5 openat() by process ---\n");
+    print(@openat_by_comm, 5);
+    
+    printf("\n--- Top 5 read() by process ---\n");
+    print(@read_by_comm, 5);
+    
+    printf("\n--- Top 5 write() by process ---\n");
+    print(@write_by_comm, 5);
+    
+    printf("\n--- Top 5 clone*() by process ---\n");
+    print(@clone_by_comm, 5);
+    
+    printf("=====================================\n\n");
+    printf("Send SIGUSR1 again to see updated statistics\n");
+}
+
+END {
+    printf("\n=== FINAL STATISTICS ===\n");
+    printf("Total openat() calls: %d\n", @openat_count);
+    printf("Total read() calls: %d\n", @read_count);
+    printf("Total write() calls: %d\n", @write_count);
+    printf("Total clone*() calls: %d\n", @clone_count);
+    
+    printf("\nFinal statistics by process:\n");
+    print(@openat_by_comm);
+    print(@read_by_comm);
+    print(@write_by_comm);
+    print(@clone_by_comm);
+}

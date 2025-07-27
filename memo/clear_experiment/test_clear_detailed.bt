@@ -1,0 +1,81 @@
+#!/usr/bin/env bpftrace
+
+/*
+ * より詳細なclear()非同期性テスト
+ * 異なるプローブを使用してタイミングを制御
+ */
+
+BEGIN {
+    printf("=== 詳細clear()テスト開始 ===\n");
+    printf("ステップ1: マップにデータを追加\n");
+    
+    @test_map["key1"] = 100;
+    @test_map["key2"] = 200;
+    @test_map["key3"] = 300;
+    
+    printf("データ追加完了\n");
+}
+
+// 100ms後にマップの内容を確認
+interval:ms:100 {
+    printf("\nステップ2: データ追加後のマップ確認\n");
+    
+    if (@test_map["key1"] > 0) {
+        printf("key1: %d\n", @test_map["key1"]);
+    }
+    if (@test_map["key2"] > 0) {
+        printf("key2: %d\n", @test_map["key2"]);
+    }
+    if (@test_map["key3"] > 0) {
+        printf("key3: %d\n", @test_map["key3"]);
+    }
+    
+    printf("ステップ3: clear()を実行\n");
+    clear(@test_map);
+    printf("clear()実行完了\n");
+}
+
+// 200ms後にclear()直後の状態を確認
+interval:ms:200 {
+    printf("\nステップ4: clear()直後のマップ確認\n");
+    
+    if (@test_map["key1"] > 0) {
+        printf("key1: %d (まだ残っている)\n", @test_map["key1"]);
+    } else {
+        printf("key1: 削除済み\n");
+    }
+    if (@test_map["key2"] > 0) {
+        printf("key2: %d (まだ残っている)\n", @test_map["key2"]);
+    } else {
+        printf("key2: 削除済み\n");
+    }
+    if (@test_map["key3"] > 0) {
+        printf("key3: %d (まだ残っている)\n", @test_map["key3"]);
+    } else {
+        printf("key3: 削除済み\n");
+    }
+}
+
+// 1秒後に最終確認
+interval:s:1 {
+    printf("\nステップ5: 1秒後の最終確認\n");
+    
+    if (@test_map["key1"] > 0) {
+        printf("key1: %d (まだ残っている)\n", @test_map["key1"]);
+    } else {
+        printf("key1: 削除済み\n");
+    }
+    if (@test_map["key2"] > 0) {
+        printf("key2: %d (まだ残っている)\n", @test_map["key2"]);
+    } else {
+        printf("key2: 削除済み\n");
+    }
+    if (@test_map["key3"] > 0) {
+        printf("key3: %d (まだ残っている)\n", @test_map["key3"]);
+    } else {
+        printf("key3: 削除済み\n");
+    }
+    
+    printf("\n=== テスト終了 ===\n");
+    exit();
+}
