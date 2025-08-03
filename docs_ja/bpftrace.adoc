@@ -1,0 +1,505 @@
+= bpftrace(8)
+:doctype: manpage
+:toc: true
+:toclevels: 1
+
+////
+スタイルガイド:
+- 1行に1文
+////
+
+== 名前
+
+bpftrace - 高レベルトレーシング言語
+
+== 概要
+
+*bpftrace* [_OPTIONS_] _FILENAME_ +
+*bpftrace* [_OPTIONS_] -e 'program code'
+
+_FILENAME_ が "_-_" の場合、bpftrace は標準入力からプログラムコードを読み取ります。
+
+プログラムは Ctrl-C が押されるか、`exit` 関数が呼ばれるまで実行を続けます。
+プログラムが終了すると、すべての入力されたマップが出力されます（詳細は以下を参照）。
+
+== 説明
+
+bpftrace は Linux 用の高レベルトレーシング言語です。bpftrace は LLVM を
+バックエンドとして使用してスクリプトを eBPF バイトコードにコンパイルし、libbpf と bcc
+を使用して Linux BPF サブシステムや既存の Linux
+トレーシング機能と相互作用します。
+
+== 例
+
+sleep を呼び出すプロセスをトレースする::
+----
+# bpftrace -e 'kprobe:do_nanosleep { printf("%d sleeping\n", pid); }'
+----
+
+子プロセスとして `sleep 5` を起動しながら sleep を呼び出すプロセスをトレースする::
+----
+# bpftrace -e 'kprobe:do_nanosleep { printf("%d sleeping\n", pid); }' -c 'sleep 5'
+----
+
+名前に "sleep" を含むすべてのプローブをリストする::
+----
+# bpftrace -l '*sleep*'
+----
+
+プログラム内でアタッチされるすべてのプローブをリストする::
+----
+# bpftrace -l -e 'kprobe:do_nanosleep { printf("%d sleeping\n", pid); }'
+----
+
+== オプション
+
+=== *-B* _MODE_
+
+標準出力のバッファモードを設定します。
+
+有効な値::
+*none* バッファリングなし。各 I/O は可能な限り早く書き込まれます +
+*line* 最初の改行またはバッファが満杯になったときにデータが書き込まれます。これがデフォルトモードです。 +
+*full* バッファが満杯になったときにデータが書き込まれます。
+
+=== *-c* _COMMAND_
+
+_COMMAND_ を子プロセスとして実行します。
+子プロセスが終了すると、bpftrace も 'exit()' が呼ばれたかのように終了します。
+子プロセスが終了する前に bpftrace が終了した場合、子プロセスは SIGTERM で終了されます。
+使用された場合、'USDT' プローブは子プロセスにのみアタッチされます。
+'USDT' を使用する際の競合状態を避けるため、子プロセスは 'execve' 後に 'ptrace(2)' を使用して停止され、すべての 'USDT' プローブがアタッチされたときに継続されます。
+子プロセスは bpftrace 自体と同じ権限（通常は root）で実行されます。
+
+特に指定がない限り、bpftrace は暗黙的なフィルタリングを行いません。したがって、
+_COMMAND_ のイベントにのみ興味がある場合は、子 PID に基づいてフィルタリングすることをお勧めします。子 PID は 'cpid' ビルトインとしてプログラムで利用できます。
+例えば、ユーザー空間コンテキストを持つプローブに述語 `/pid == cpid/` を追加できます。
+
+=== *-d STAGE*
+
+デバッグモードを有効にします。
+詳細については <<Debug Output>> セクションを参照してください。
+
+=== *--dry-run*
+
+すべてのプローブをアタッチした直後に実行を終了します。スクリプトが
+解析、ロード、アタッチできることをテストするのに便利で、実際に実行することはありません。
+
+=== *-e* _PROGRAM_
+
+ファイルや標準入力からプログラムを読み取る代わりに _PROGRAM_ を実行します。
+
+=== *-f* _FORMAT_
+
+出力フォーマットを設定します。
+
+有効な値::
+*json* +
+*text*
+
+JSON 出力は NDJSON および JSON Lines と互換性があり、ストリーミング出力の各行が単一の有効な JSON ブロブであることを意味します。
+
+=== *-h, --help*
+
+ヘルプサマリーを出力します。
+
+=== *-I* _DIR_
+
+ディレクトリ _DIR_ を C ヘッダーの検索パスに追加します。
+このオプションは複数回使用できます。
+詳細については <<Preprocessor Options>> セクションを参照してください。
+
+=== *--include* _FILENAME_
+
+プリプロセッサのインクルードとして _FILENAME_ を追加します。
+これはプログラムの先頭に '#include _FILENAME_' を追加することと同等です。
+このオプションは複数回使用できます。
+詳細については <<Preprocessor Options>> セクションを参照してください。
+
+=== *--info*
+
+カーネルと bpftrace ビルドでサポートされている機能に関する詳細情報を出力します。
+
+=== *-k*
+
+このフラグは 'probe_read_*' およびマップ検索 BPF ヘルパーからのエラーに対するランタイム警告を有効にします。
+エラーが発生すると、bpftrace はソースの場所とエラーコードを含むエラーをログに記録します：
+
+----
+stdin:48-57: WARNING: Failed to probe_read_user_str: Bad address (-14)
+u:lib.so:"fn(char const*)" { printf("arg0:%s\n", str(arg0));}
+                                                 ~~~~~~~~~
+----
+
+=== *-l* [_SEARCH_|_FILENAME_]
+
+_SEARCH_ パターンにマッチするすべてのプローブをリストします。
+パターンが省略された場合、すべてのプローブがリストされます。
+このパターンはプローブと同じ方法でワイルドカードをサポートします。
+例：'-l kprobe:*file*' で名前に 'file' を含むすべての 'kprobe' をリストします。
+これはプログラムと一緒に使用でき、そのプログラム内のすべてのプローブをリストします。
+詳細については <<Listing Probes>> セクションを参照してください。
+
+=== *--no-feature* _feature,feature,..._
+
+検出された機能の使用を無効にします。有効な値::
+*uprobe_multi* uprobe_multi リンクを無効にする +
+*kprobe_multi* kprobe_multi リンクを無効にする +
+*kprobe_session* kprobe/kretprobe の kprobe セッションへの自動統合を無効にする
+
+=== *--no-warnings*
+
+bpftrace によって作成されるすべての警告メッセージを抑制します。
+
+=== *-o* _FILENAME_
+
+bpftrace トレーシング出力を標準出力の代わりに _FILENAME_ に書き込みます。
+これには子プロセス（*-c* オプション）の出力は含まれません。
+エラーは引き続き標準エラー出力に書き込まれます。
+
+=== *-p* _PID_
+
+_PID_ のプロセスにアタッチするか、アクションを _PID_ でフィルタリングします。
+プロセスが終了すると、bpftrace も終了します。
+USDT、uprobe、uretprobe、hardware、software、profile、interval、watchpoint、または asyncwatchpoint プローブを使用する場合、これらはこのプロセスにのみアタッチされます。
+他のすべてのプローブ（BEGIN/END を除く）では、pid はその pid からのイベントではないものをフィルタリングする述語のように動作します。
+uprobe/uretprobe をリストする場合は、ターゲットを '*' に設定すると、プロセスのアドレス空間がシンボルを検索されます。
+
+=== *-q*
+
+メッセージを静かに保ちます。
+
+=== *--unsafe*
+
+'system' などの一部の呼び出しは、危険な副作用（'system("rm -rf")'）を持つ可能性があるため安全でないとマークされ、デフォルトで無効になっています。
+このフラグはそれらの使用を許可します。
+
+=== *--usdt-file-activation*
+
+ファイルパスに基づいて usdt セマフォを有効化します。
+
+=== *-V, --version*
+
+bpftrace バージョン情報を出力します。
+
+=== *-v*
+
+詳細メッセージを有効にします。
+詳細については <<Verbose Output>> セクションを参照してください。
+
+=== プログラムオプション
+
+位置パラメータまたは名前付きパラメータを介して、bpftrace プログラム/スクリプト自体にカスタムオプションを渡すこともできます。
+位置パラメータはダブルダッシュの前後に配置できますが、名前付きパラメータはダブルダッシュの後にのみ配置できます。例：
+```
+# bpftrace -e 'BEGIN { print(($1, $2, getopt("aa", 1), getopt("bb"))); }' p1 -- --aa=20 --bb p2
+
+// (p1, p2, 20, true) が出力される
+```
+または
+```
+# bpftrace myscript.bt -- p1 --aa=20 --bb p2
+```
+
+これらの例では、2つの位置パラメータ（`p1`、`p2`）と2つの名前付きパラメータ（`aa`（`20` に設定）、`bb`（`true` に設定））があります。
+名前付きプログラムパラメータは、ブール値パラメータ（上記の 'bb' など）でない限り、値を設定するために `=` が必要です。
+位置パラメータと名前付きパラメータにアクセスする方法については link:https://github.com/bpftrace/bpftrace/blob/master/docs/language.md#command-line-parameters[こちら] をお読みください。
+
+== 言語
+
+bpftrace の構文、型、概念は link:https://github.com/bpftrace/bpftrace/blob/master/docs/language.md[こちらで利用できます]。
+
+== プローブ
+
+bpftrace は様々なプローブタイプをサポートしており、ユーザーが BPF プログラムを異なるタイプのイベントにアタッチできます。
+各プローブはプロバイダー（例：`kprobe`）で始まり、その後にコロン（`:`）で区切られたオプションのリストが続きます。
+オプションの数とその意味はプロバイダーによって異なります。
+link:https://github.com/bpftrace/bpftrace/blob/master/docs/language.md#probes[プローブタイプの完全なリスト]。
+
+== 標準ライブラリ
+
+すべての link:https://github.com/bpftrace/bpftrace/blob/master/docs/stdlib.md#builtins[ビルトイン]、link:https://github.com/bpftrace/bpftrace/blob/master/docs/stdlib.md#functions[関数]、および link:https://github.com/bpftrace/bpftrace/blob/master/docs/stdlib.md#map-functions[マップ関数] の標準ライブラリは link:https://github.com/bpftrace/bpftrace/blob/master/docs/stdlib.md[こちらで利用できます]。
+
+== 設定
+
+=== 設定変数
+
+一部の動作は設定変数を通じてのみ制御でき、これらは link:https://github.com/bpftrace/bpftrace/blob/master/docs/language.md#config-variables[こちらで利用できます]。
+これらはスクリプト内の Config Block（任意のプローブの前）で直接設定するか、対応する環境変数（大文字で `BPFTRACE_` プレフィックスを含む）を介して設定できます。例：``stack_mode`` の環境変数は `BPFTRACE_STACK_MODE` になります。
+
+=== 環境変数
+
+これらは上記の標準設定変数セットの一部として利用できず、環境変数としてのみ設定できます。
+
+==== BPFTRACE_BTF
+
+デフォルト: なし
+
+BTF ファイルへのパス。デフォルトでは、bpftrace は BTF ファイルを見つけるためにいくつかの場所を検索します。
+詳細については src/btf.cpp を参照してください。
+
+==== BPFTRACE_DEBUG_OUTPUT
+
+デフォルト: 0
+
+bpftrace のランタイムデバッグメッセージを trace_pipe に出力します。この機能は
+この環境変数の値を `1` に設定することで有効にできます。
+
+==== BPFTRACE_KERNEL_BUILD
+
+デフォルト: `/lib/modules/$(uname -r)`
+
+ツリー外の Linux カーネルビルドの場合、`BPFTRACE_KERNEL_SOURCE` と一緒に使用されます。
+
+==== BPFTRACE_KERNEL_SOURCE
+
+デフォルト: `/lib/modules/$(uname -r)`
+
+bpftrace は特定の機能にカーネルヘッダーを必要とし、このディレクトリで検索されます。
+
+==== BPFTRACE_VMLINUX
+
+デフォルト: なし
+
+これは、オフセットに kprobe をアタッチする際のカーネルシンボル解決に使用される vmlinux パスを指定します。
+この値が指定されていない場合、bpftrace は事前定義された場所から vmlinux を検索します。
+詳細については src/attached_probe.cpp:find_vmlinux() を参照してください。
+
+==== BPFTRACE_COLOR
+
+デフォルト: auto
+
+bpftrace ログ出力メッセージを色付けします。有効な値は auto、always、never です。
+
+== オプションの詳細
+
+=== デバッグ出力
+
+`-d STAGE` オプションはデバッグ出力を生成します。_STAGE_ 引数で指定された
+bpftrace 実行ステージの出力を出力します。このオプションは複数回使用でき
+（異なるステージ名で）、特別な値 `all` はサポートされているすべてのステージの
+出力を出力します。このオプションは、カンマ区切り値として1回の呼び出しで複数のステージを取ることもできます。
+
+注意：これは主に bpftrace 開発者向けです。
+
+サポートされているオプション：
+
+[cols="~,~"]
+|===
+
+| `ast`
+| すべてのパス後に抽象構文木（AST）を出力します。
+
+| `codegen`
+| `CodegenLLVM` によって生成される最適化されていない LLVM IR を出力します。
+
+| `codegen-opt`
+| 最適化された LLVM IR、つまり BPF バイトコードにコンパイルされるコードを出力します。
+
+| `dis`
+| `libbpf` が見る生成されたバイトコードを逆アセンブルして出力します。
+デバッグビルドでのみ利用可能です。
+
+| `libbpf`
+| bpftrace が使用するすべての libbpf 操作の libbpf ログをキャプチャして出力します。
+
+| `verifier`
+| BPF 検証器ログをキャプチャして出力します。
+
+| `all`
+| 上記すべてのステージの出力を出力します。
+
+|===
+
+=== プローブのリスト
+
+プローブリストは、現在のシステムでサポートされているプローブを発見する方法です。
+リストは通常のアタッチメントと同じ構文をサポートし、代替として
+`-e` またはファイル名引数と組み合わせて、プログラムがアタッチするすべてのプローブを確認できます。
+
+----
+# bpftrace -l 'kprobe:*'
+# bpftrace -l 't:syscalls:*openat*
+# bpftrace -l 'kprobe:tcp*,trace
+# bpftrace -l 'k:*socket*,tracepoint:syscalls:*tcp*'
+# bpftrace -l -e 'tracepoint:xdp:mem_* { exit(); }'
+# bpftrace -l my_script.bt
+# bpftrace -lv 'enum cpu_usage_stat'
+----
+
+詳細フラグ（`-v`）を指定して、それをサポートするプロバイダーの引数（`args`）を検査できます：
+
+----
+# bpftrace -l 'fexit:tcp_reset,tracepoint:syscalls:sys_enter_openat' -v
+fexit:tcp_reset
+    struct sock * sk
+    struct sk_buff * skb
+tracepoint:syscalls:sys_enter_openat
+    int __syscall_nr
+    int dfd
+    const char * filename
+    int flags
+    umode_t mode
+
+# bpftrace -l 'uprobe:/bin/bash:rl_set_prompt' -v    # /bin/bash に DWARF がある場合のみ動作
+uprobe:/bin/bash:rl_set_prompt
+    const char *prompt
+
+# bpftrace -lv 'struct css_task_iter'
+struct css_task_iter {
+        struct cgroup_subsys *ss;
+        unsigned int flags;
+        struct list_head *cset_pos;
+        struct list_head *cset_head;
+        struct list_head *tcset_pos;
+        struct list_head *tcset_head;
+        struct list_head *task_pos;
+        struct list_head *cur_tasks_head;
+        struct css_set *cur_cset;
+        struct css_set *cur_dcset;
+        struct task_struct *cur_task;
+        struct list_head iters_node;
+};
+----
+
+=== プリプロセッサオプション
+
+`-I` オプションは、bpftrace がヘッダーを探すために使用するディレクトリのリストにディレクトリを追加するために使用できます。
+複数回定義できます。
+
+----
+# cat program.bt
+#include <foo.h>
+
+BEGIN { @ = FOO }
+
+# bpftrace program.bt
+
+definitions.h:1:10: fatal error: 'foo.h' file not found
+
+# /tmp/include
+foo.h
+
+# bpftrace -I /tmp/include program.bt
+
+Attached 1 probe
+----
+
+`--include` オプションは、デフォルトでヘッダーをインクルードするために使用できます。
+複数回定義できます。
+ヘッダーは定義された順序でインクルードされ、実行されるプログラム内の他のインクルードの前にインクルードされます。
+
+----
+# bpftrace --include linux/path.h --include linux/dcache.h \
+    -e 'kprobe:vfs_open { printf("open path: %s\n", str(((struct path *)arg0)->dentry->d_name.name)); }'
+
+Attached 1 probe
+open path: .com.google.Chrome.ASsbu2
+open path: .com.google.Chrome.gimc10
+open path: .com.google.Chrome.R1234s
+----
+
+=== 詳細出力
+
+`-v` オプションは、プログラムの実行時により多くの情報を出力します：
+
+----
+# bpftrace -v -e 'tracepoint:syscalls:sys_enter_nanosleep { printf("%s is sleeping.\n", comm); }'
+AST node count: 7
+Attached 1 probe
+
+load tracepoint:syscalls:sys_enter_nanosleep, with BTF, with func_infos: Success
+
+Program ID: 111
+Attaching tracepoint:syscalls:sys_enter_nanosleep
+iscsid is sleeping.
+iscsid is sleeping.
+[...]
+----
+
+== 用語
+
+[cols="~,~"]
+|===
+
+| BPF
+| Berkeley Packet Filter：パケットフィルター（例：tcpdump 式）の処理を最適化するために元々開発されたカーネル技術。
+
+| BPF マップ
+| BPF メモリオブジェクト。bpftrace が多くの高レベルオブジェクトを作成するために使用されます。
+
+| BTF
+| BPF Type Format：BPF プログラム/マップに関連するデバッグ情報をエンコードするメタデータフォーマット。
+
+| 動的トレーシング
+| 動的インストルメンテーションとも呼ばれ、命令テキストのライブ変更によって、関数呼び出しや戻り値などの任意のソフトウェアイベントをインストルメントできる技術。対象ソフトウェアは通常、bpftrace が読み取れるシンボルテーブル以外に動的トレーシングをサポートするための特別な機能を必要としません。これはすべてのソフトウェアテキストをインストルメントするため、安定した API とは見なされず、対象関数はソースコード以外では文書化されていない場合があります。
+
+| eBPF
+| Enhanced BPF：BPF を拡張して、以下にリストされている bpftrace プログラムなど、任意のイベントでより汎用的なプログラムを実行できるようにするカーネル技術。BPF サンドボックス化された仮想マシン環境を利用します。また、eBPF は単に BPF と呼ばれることが多いことに注意してください。
+
+| kprobe
+| カーネル関数の動的トレーシングを提供する Linux カーネル技術。
+
+| プローブ
+| bpftrace プログラムを実行できるイベントを生成する、ソフトウェアまたはハードウェアのインストルメンテーションポイント。
+
+| 静的トレーシング
+| コードにハードコードされたインストルメンテーションポイント。これらは固定されているため、安定した API の一部として提供され、文書化される場合があります。
+
+| トレースポイント
+| 静的トレーシングを提供する Linux カーネル技術。
+
+| uprobe
+| ユーザーレベル関数の動的トレーシングを提供する Linux カーネル技術。
+
+| USDT
+| User Statically-Defined Tracing：ユーザーレベルソフトウェア用の静的トレーシングポイント。一部のアプリケーションは USDT をサポートしています。
+
+|===
+
+== プログラムファイル
+
+ファイルとして保存されたプログラムはしばしばスクリプトと呼ばれ、ファイル名を指定することで実行できます。
+`.bt` ファイル拡張子を使用するのが慣例ですが、必須ではありません。
+
+例えば、`cat` を使用して sleepers.bt ファイルをリストする：
+
+----
+# cat sleepers.bt
+
+tracepoint:syscalls:sys_enter_nanosleep {
+  printf("%s is sleeping.\n", comm);
+}
+----
+
+そしてそれを呼び出す：
+
+----
+# bpftrace sleepers.bt
+
+Attached 1 probe
+iscsid is sleeping.
+iscsid is sleeping.
+----
+
+スタンドアロンで実行するために実行可能にすることもできます。
+先頭にインタープリターライン（`#!`）を追加し、インストールされた bpftrace へのパス（デフォルトは /usr/local/bin）または `env` へのパス（通常は `/usr/bin/env`）の後に `bpftrace` を続けます（これにより `$PATH` で bpftrace が見つかります）：
+
+----
+#!/usr/local/bin/bpftrace
+
+tracepoint:syscalls:sys_enter_nanosleep {
+  printf("%s is sleeping.\n", comm);
+}
+----
+
+そして実行可能にします：
+
+----
+# chmod 755 sleepers.bt
+# ./sleepers.bt
+
+Attached 1 probe
+iscsid is sleeping.
+iscsid is sleeping.
+----

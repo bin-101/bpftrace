@@ -1,0 +1,102 @@
+++ LLVM_VER=17
+++ BPFTRACE_VER=v0.23.5
+++ INSTALL_PREFIX=/usr/local
+++ command -v clang-17
+++ echo '[*] Installing build dependencies ...'
+[*] Installing build dependencies ...
+++ sudo apt update
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+ヒット:1 http://archive.ubuntulinux.jp/ubuntu jammy InRelease
+ヒット:2 https://download.virtualbox.org/virtualbox/debian jammy InRelease
+ヒット:3 http://archive.ubuntulinux.jp/ubuntu-ja-non-free jammy InRelease
+ヒット:4 https://dl.google.com/linux/chrome/deb stable InRelease
+ヒット:6 http://jp.archive.ubuntu.com/ubuntu jammy InRelease
+ヒット:7 http://security.ubuntu.com/ubuntu jammy-security InRelease
+ヒット:8 http://jp.archive.ubuntu.com/ubuntu jammy-updates InRelease
+ヒット:5 https://apt.llvm.org/jammy llvm-toolchain-jammy-17 InRelease
+ヒット:9 http://jp.archive.ubuntu.com/ubuntu jammy-backports InRelease
+パッケージリストを読み込んでいます...
+依存関係ツリーを作成しています...
+状態情報を読み取っています...
+アップグレードできるパッケージが 91 個あります。表示するには 'apt list --upgradable' を実行してください。
+++ sudo apt install -y git cmake bison flex g++ libelf-dev zlib1g-dev libfl-dev systemtap-sdt-dev binutils-dev libdw-dev libclang-17-dev llvm-17-dev libedit-dev libxml2-dev
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+パッケージリストを読み込んでいます...
+依存関係ツリーを作成しています...
+状態情報を読み取っています...
+bison はすでに最新バージョン (2:3.8.2+dfsg-1build1) です。
+flex はすでに最新バージョン (2.6.4-8build2) です。
+g++ はすでに最新バージョン (4:11.2.0-1ubuntu1) です。
+libedit-dev はすでに最新バージョン (3.1-20210910-1build1) です。
+libfl-dev はすでに最新バージョン (2.6.4-8build2) です。
+systemtap-sdt-dev はすでに最新バージョン (4.6-2) です。
+binutils-dev はすでに最新バージョン (2.38-4ubuntu2.8) です。
+cmake はすでに最新バージョン (3.22.1-1ubuntu1.22.04.2) です。
+git はすでに最新バージョン (1:2.34.1-1ubuntu1.15) です。
+libdw-dev はすでに最新バージョン (0.186-1ubuntu0.1) です。
+libelf-dev はすでに最新バージョン (0.186-1ubuntu0.1) です。
+libxml2-dev はすでに最新バージョン (2.9.13+dfsg-1ubuntu0.7) です。
+zlib1g-dev はすでに最新バージョン (1:1.2.11.dfsg-2ubuntu9.2) です。
+libclang-17-dev はすでに最新バージョン (1:17.0.6~++20231209124227+6009708b4367-1~exp1~20231209124336.77) です。
+llvm-17-dev はすでに最新バージョン (1:17.0.6~++20231209124227+6009708b4367-1~exp1~20231209124336.77) です。
+アップグレード: 0 個、新規インストール: 0 個、削除: 0 個、保留: 91 個。
+++ git fetch
+++ git submodule update --init --recursive
+++ export CC=clang-17
+++ CC=clang-17
+++ export CXX=clang++-17
+++ CXX=clang++-17
+++ export LLVM_DIR=/usr/lib/llvm-17
+++ LLVM_DIR=/usr/lib/llvm-17
+++ export PATH=/usr/lib/llvm-17/bin:/home/bin101/.local/bin:/home/bin101/.cargo/bin:/home/bin101/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin:/home/bin101/.config/Code/User/globalStorage/github.copilot-chat/debugCommand
+++ PATH=/usr/lib/llvm-17/bin:/home/bin101/.local/bin:/home/bin101/.cargo/bin:/home/bin101/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/snap/bin:/home/bin101/.config/Code/User/globalStorage/github.copilot-chat/debugCommand
+++ echo '[*] Building bpftrace ...'
+[*] Building bpftrace ...
+++ mkdir -p build
+++ cd build
+++ cmake -DCMAKE_BUILD_TYPE=Release -DLLVM_REQUESTED_VERSION=17 -DCMAKE_INSTALL_PREFIX=/usr/local ..
+-- The CXX compiler identification is Clang 17.0.6
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - failed
+-- Check for working CXX compiler: /usr/bin/clang++-17
+-- Check for working CXX compiler: /usr/bin/clang++-17 - broken
+CMake Error at /usr/share/cmake-3.22/Modules/CMakeTestCXXCompiler.cmake:62 (message):
+  The C++ compiler
+
+    "/usr/bin/clang++-17"
+
+  is not able to compile a simple test program.
+
+  It fails with the following output:
+
+    Change Dir: /home/bin101/code/bpftrace/build/CMakeFiles/CMakeTmp
+    
+    Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_89067/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_89067.dir/build.make CMakeFiles/cmTC_89067.dir/build
+    gmake[1]: ディレクトリ '/home/bin101/code/bpftrace/build/CMakeFiles/CMakeTmp' に入ります
+    Building CXX object CMakeFiles/cmTC_89067.dir/testCXXCompiler.cxx.o
+    /usr/bin/clang++-17    -MD -MT CMakeFiles/cmTC_89067.dir/testCXXCompiler.cxx.o -MF CMakeFiles/cmTC_89067.dir/testCXXCompiler.cxx.o.d -o CMakeFiles/cmTC_89067.dir/testCXXCompiler.cxx.o -c /home/bin101/code/bpftrace/build/CMakeFiles/CMakeTmp/testCXXCompiler.cxx
+    Linking CXX executable cmTC_89067
+    /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_89067.dir/link.txt --verbose=1
+    /usr/bin/clang++-17 CMakeFiles/cmTC_89067.dir/testCXXCompiler.cxx.o -o cmTC_89067 
+    /usr/bin/ld: -lstdc++ が見つかりません: そのようなファイルやディレクトリはありません
+    clang++-17: error: linker command failed with exit code 1 (use -v to see invocation)
+    gmake[1]: *** [CMakeFiles/cmTC_89067.dir/build.make:100: cmTC_89067] エラー 1
+    gmake[1]: ディレクトリ '/home/bin101/code/bpftrace/build/CMakeFiles/CMakeTmp' から出ます
+    gmake: *** [Makefile:127: cmTC_89067/fast] エラー 2
+    
+    
+
+  
+
+  CMake will not be able to correctly generate this project.
+Call Stack (most recent call first):
+  CMakeLists.txt:2 (project)
+
+
+-- Configuring incomplete, errors occurred!
+See also "/home/bin101/code/bpftrace/build/CMakeFiles/CMakeOutput.log".
+See also "/home/bin101/code/bpftrace/build/CMakeFiles/CMakeError.log".
