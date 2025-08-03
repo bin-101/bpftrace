@@ -542,6 +542,7 @@ Args parse_args(int argc, char* argv[])
         args.include_files.emplace_back(optarg);
         break;
       case 'l':
+        LOG(ERROR) << "Testing LOG(ERROR) output with -l option";
         args.listing = true;
         break;
       case 'c':
