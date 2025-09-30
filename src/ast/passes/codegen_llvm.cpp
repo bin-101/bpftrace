@@ -104,6 +104,12 @@ static bool shouldForceInitPidNs(const ExpressionList &args)
   return args.size() == 1 && args.at(0).as<Identifier>()->ident == "init";
 }
 
+static bool shouldForceThread(const ExpressionList &args)
+{
+  return args.size() == 2 &&
+         args.at(1).as<Identifier>()->ident == "current_tid";
+}
+
 namespace {
 
 class InternalError : public ErrorInfo<InternalError> {
@@ -1923,14 +1929,16 @@ ScopedExpr CodegenLLVM::visit(Call &call)
       if (sigid < 1) {
         LOG(BUG) << "Invalid signal ID for \"" << signame << "\"";
       }
-      b_.CreateSignal(b_.getInt32(sigid), call.loc);
+      b_.CreateSignal(b_.getInt32(sigid),
+                      call.loc,
+                      shouldForceThread(call.vargs));
       return ScopedExpr();
     }
     auto scoped_arg = visit(arg);
     Value *sig_number = b_.CreateIntCast(scoped_arg.value(),
                                          b_.getInt32Ty(),
                                          arg.type().IsSigned());
-    b_.CreateSignal(sig_number, call.loc);
+    b_.CreateSignal(sig_number, call.loc, shouldForceThread(call.vargs));
     return ScopedExpr();
   } else if (call.func == "strerror") {
     return visit(call.vargs.front());
@@ -4105,7 +4113,7 @@ Result<> CodegenLLVM::generateWatchpointSetupProbe(
 
   // Send SIGSTOP to curtask
   if (!current_attach_point_->async)
-    b_.CreateSignal(b_.getInt32(SIGSTOP), current_attach_point_->loc);
+    b_.CreateSignal(b_.getInt32(SIGSTOP), current_attach_point_->loc, false);
 
   // Pull out function argument
   Value *ctx = func->arg_begin();
