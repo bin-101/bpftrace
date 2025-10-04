@@ -73,6 +73,8 @@ public:
   DEFINE_HELPER_TEST(ktime_get_tai_ns, BPF_PROG_TYPE_KPROBE);
   DEFINE_HELPER_TEST(get_func_ip, BPF_PROG_TYPE_KPROBE);
   DEFINE_HELPER_TEST(map_lookup_percpu_elem, BPF_PROG_TYPE_KPROBE);
+  DEFINE_HELPER_TEST(send_signal, BPF_PROG_TYPE_KPROBE);
+  DEFINE_HELPER_TEST(send_signal_thread, BPF_PROG_TYPE_KPROBE);
   DEFINE_HELPER_TEST(loop, BPF_PROG_TYPE_KPROBE); // Added in 5.17.
 
 protected:

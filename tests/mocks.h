@@ -163,12 +163,24 @@ public:
     has_ktime_get_tai_ns_ = std::make_optional<bool>(has_features);
     has_get_func_ip_ = std::make_optional<bool>(has_features);
     has_map_lookup_percpu_elem_ = std::make_optional<bool>(has_features);
+    has_send_signal_ = std::make_optional<bool>(has_features);
+    has_send_signal_thread_ = std::make_optional<bool>(has_features);
     has_loop_ = std::make_optional<bool>(has_features);
   };
 
   void add_to_available_kernel_funcs(Kfunc kfunc, bool available)
   {
     available_kernel_funcs_.emplace(kfunc, available);
+  }
+
+  void set_helper_send_signal(bool available)
+  {
+    has_send_signal_ = std::make_optional<bool>(available);
+  }
+
+  void set_helper_send_signal_thread(bool available)
+  {
+    has_send_signal_thread_ = std::make_optional<bool>(available);
   }
 
   bool has_kernel_func(Kfunc kfunc) override

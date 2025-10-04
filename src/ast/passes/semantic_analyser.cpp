@@ -541,8 +541,11 @@ static const std::map<std::string, call_spec> CALL_SPEC = {
         arg_type_spec{ .type=Type::string, .literal=true } } } },
   { "signal",
     { .min_args=1,
-      .max_args=1,
-       } },
+      .max_args=2,
+      .arg_types={
+        arg_type_spec{},
+        arg_type_spec{ .skip_check=true },
+      } } },
   { "sizeof",
     { .min_args=1,
       .max_args=1,
@@ -832,6 +835,12 @@ void SemanticAnalyser::visit(Identifier &identifier)
       identifier.addError()
           << "Invalid PID namespace mode: " << identifier.ident
           << " (expects: curr_ns or init)";
+    }
+  } else if (func_ == "signal") {
+    if (identifier.ident != "current_pid" && identifier.ident != "current_tid") {
+      identifier.addError()
+          << "Invalid signal target: " << identifier.ident
+          << " (expects: current_pid or current_tid)";
     }
   } else {
     // Final attempt: try to parse as a stack mode.
@@ -1726,6 +1735,20 @@ void SemanticAnalyser::visit(Call &call)
     check_stack_call(call, false);
   } else if (call.func == "signal") {
     auto &arg = call.vargs.at(0);
+    bool target_thread = false;
+
+    if (call.vargs.size() == 2) {
+      if (auto *target = call.vargs.at(1).as<Identifier>()) {
+        if (target->ident == "current_tid")
+          target_thread = true;
+        else if (target->ident != "current_pid")
+          call.addError() << "Invalid signal target: " << target->ident
+                          << " (expects: current_pid or current_tid)";
+      } else {
+        call.addError() << "signal target must be an identifier (current_pid or current_tid)";
+      }
+    }
+
     if (auto *sig = arg.as<String>()) {
       if (signal_name_to_num(sig->value) < 1) {
         call.addError() << sig << " is not a valid signal";
@@ -1739,6 +1762,18 @@ void SemanticAnalyser::visit(Call &call)
     } else if (arg.is<NegativeInteger>() || !arg.type().IsIntTy()) {
       call.addError()
           << "signal only accepts literal strings and positive integers";
+    }
+
+    if (is_final_pass()) {
+      bool helper_available = target_thread
+                                  ? bpftrace_.feature_->has_helper_send_signal_thread()
+                                  : bpftrace_.feature_->has_helper_send_signal();
+      if (!helper_available) {
+        call.addError()
+            << (target_thread ? "BPF_FUNC_send_signal_thread"
+                               : "BPF_FUNC_send_signal")
+            << " not available for your kernel version";
+      }
     }
   } else if (call.func == "path") {
     auto *probe = get_probe(call, call.func);

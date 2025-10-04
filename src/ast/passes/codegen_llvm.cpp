@@ -1914,6 +1914,23 @@ ScopedExpr CodegenLLVM::visit(Call &call)
   } else if (call.func == "kstack" || call.func == "ustack") {
     return kstack_ustack(call.func, call.return_type.stack_type, call.loc);
   } else if (call.func == "signal") {
+    bool target_thread = false;
+    if (call.vargs.size() == 2) {
+      if (auto *target = call.vargs.at(1).as<Identifier>()) {
+        target_thread = target->ident == "current_tid";
+      } else {
+        LOG(BUG) << "signal target is not an identifier";
+      }
+    }
+
+    auto emit_signal = [&](Value *sig) {
+      if (target_thread) {
+        b_.CreateSignalThread(sig, call.loc);
+      } else {
+        b_.CreateSignal(sig, call.loc);
+      }
+    };
+
     // long bpf_send_signal(u32 sig)
     auto &arg = call.vargs.at(0);
     if (arg.type().IsStringTy()) {
@@ -1923,14 +1940,14 @@ ScopedExpr CodegenLLVM::visit(Call &call)
       if (sigid < 1) {
         LOG(BUG) << "Invalid signal ID for \"" << signame << "\"";
       }
-      b_.CreateSignal(b_.getInt32(sigid), call.loc);
+      emit_signal(b_.getInt32(sigid));
       return ScopedExpr();
     }
     auto scoped_arg = visit(arg);
     Value *sig_number = b_.CreateIntCast(scoped_arg.value(),
                                          b_.getInt32Ty(),
                                          arg.type().IsSigned());
-    b_.CreateSignal(sig_number, call.loc);
+    emit_signal(sig_number);
     return ScopedExpr();
   } else if (call.func == "strerror") {
     return visit(call.vargs.front());

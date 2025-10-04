@@ -179,6 +179,7 @@ public:
                          const std::vector<Value *> &values,
                          const Location &loc);
   void CreateSignal(Value *sig, const Location &loc);
+  void CreateSignalThread(Value *sig, const Location &loc);
   void CreateOverrideReturn(Value *ctx, Value *rc);
   void CreateRuntimeError(RuntimeErrorId rte_id, const Location &loc);
   void CreateRuntimeError(RuntimeErrorId rte_id,

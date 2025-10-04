@@ -841,17 +841,21 @@ For kretprobe and uretprobe, its type is uint64, but for fexit it depends. You c
 ### signal
 - `void signal(const string sig)`
 - `void signal(uint32 signum)`
+- `void signal(const string sig, signal_target target)`
+- `void signal(uint32 signum, signal_target target)`
 
 **unsafe**
 
-**Kernel** 5.3
+**Kernel** 5.3 (`current_pid`), 5.5 (`current_tid`)
 
-This utilizes the BPF helper `bpf_send_signal`
+This utilizes the BPF helpers `bpf_send_signal` and `bpf_send_signal_thread`
 
 Probe types: k(ret)probe, u(ret)probe, USDT, profile
 
-Send a signal to the process being traced.
+Send a signal to the process or thread being traced.
 The signal can either be identified by name, e.g. `SIGSTOP` or by ID, e.g. `19` as found in `kill -l`.
+The optional second argument selects the target (`current_pid` is the default).
+`signal_target` accepts `current_pid` or `current_tid`.
 
 ```
 kprobe:__x64_sys_execve
@@ -860,8 +864,10 @@ kprobe:__x64_sys_execve
 }
 ```
 ```
-$ ls
-Trace/breakpoint trap (core dumped)
+kprobe:__x64_sys_execve
+/comm == "bash"/ {
+  signal(5, current_tid);
+}
 ```
 
 

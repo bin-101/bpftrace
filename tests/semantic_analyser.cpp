@@ -3519,6 +3519,9 @@ TEST_F(SemanticAnalyserTest, signal)
   test("u:/bin/sh:f { signal(11); }", UnsafeMode::Enable);
   test("ur:/bin/sh:f { signal(11); }", UnsafeMode::Enable);
   test("p:hz:1 { signal(1); }", UnsafeMode::Enable);
+  test("k:f { signal(1, current_pid); }", UnsafeMode::Enable);
+  test("k:f { signal(1, current_tid); }", UnsafeMode::Enable);
+  test("k:f { signal(\"SIGTERM\", current_tid); }", UnsafeMode::Enable);
 
   // vars
   test("k:f { @=1; signal(@); }", UnsafeMode::Enable);
@@ -3541,6 +3544,24 @@ TEST_F(SemanticAnalyserTest, signal)
   test("k:f { signal(100); }", UnsafeMode::Enable, Error{});
   test("k:f { signal(\"SIGABC\"); }", UnsafeMode::Enable, Error{});
   test("k:f { signal(\"ABC\"); }", UnsafeMode::Enable, Error{});
+  test("k:f { signal(1, foo); }", UnsafeMode::Enable, Error{});
+  test("k:f { signal(1, 1); }", UnsafeMode::Enable, Error{});
+
+  auto signal_mock = get_mock_bpftrace();
+  static_cast<MockBPFfeature *>(signal_mock->feature_.get())
+      ->set_helper_send_signal_thread(false);
+  test("k:f { signal(1, current_tid); }",
+       UnsafeMode::Enable,
+       Mock{ *signal_mock },
+       Error{ "BPF_FUNC_send_signal_thread not available" });
+
+  auto process_mock = get_mock_bpftrace();
+  static_cast<MockBPFfeature *>(process_mock->feature_.get())
+      ->set_helper_send_signal(false);
+  test("k:f { signal(1); }",
+       UnsafeMode::Enable,
+       Mock{ *process_mock },
+       Error{ "BPF_FUNC_send_signal not available" });
 
   // Positional parameter
   auto bpftrace = get_mock_bpftrace();

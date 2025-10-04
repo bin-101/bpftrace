@@ -2103,6 +2103,23 @@ void IRBuilderBPF::CreateSignal(Value *sig, const Location &loc)
   CreateHelperErrorCond(call, BPF_FUNC_send_signal, loc);
 }
 
+void IRBuilderBPF::CreateSignalThread(Value *sig, const Location &loc)
+{
+  // long bpf_send_signal_thread(u32 sig)
+  // Return: 0 or error
+  FunctionType *signal_func_type = FunctionType::get(getInt64Ty(),
+                                                     { getInt32Ty() },
+                                                     false);
+  PointerType *signal_func_ptr_type = PointerType::get(getContext(), 0);
+  Constant *signal_func = ConstantExpr::getCast(
+      Instruction::IntToPtr,
+      getInt64(BPF_FUNC_send_signal_thread),
+      signal_func_ptr_type);
+  CallInst *call =
+      createCall(signal_func_type, signal_func, { sig }, "signal_thread");
+  CreateHelperErrorCond(call, BPF_FUNC_send_signal_thread, loc);
+}
+
 void IRBuilderBPF::CreateOverrideReturn(Value *ctx, Value *rc)
 {
   // long bpf_override_return(struct pt_regs *regs, u64 rc)
