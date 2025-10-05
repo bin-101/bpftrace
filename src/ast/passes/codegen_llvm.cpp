@@ -1923,14 +1923,6 @@ ScopedExpr CodegenLLVM::visit(Call &call)
       }
     }
 
-    auto emit_signal = [&](Value *sig) {
-      if (target_thread) {
-        b_.CreateSignalThread(sig, call.loc);
-      } else {
-        b_.CreateSignal(sig, call.loc);
-      }
-    };
-
     // long bpf_send_signal(u32 sig)
     auto &arg = call.vargs.at(0);
     if (arg.type().IsStringTy()) {
@@ -1940,14 +1932,14 @@ ScopedExpr CodegenLLVM::visit(Call &call)
       if (sigid < 1) {
         LOG(BUG) << "Invalid signal ID for \"" << signame << "\"";
       }
-      emit_signal(b_.getInt32(sigid));
+      b_.CreateSignal(b_.getInt32(sigid), call.loc, target_thread);
       return ScopedExpr();
     }
     auto scoped_arg = visit(arg);
     Value *sig_number = b_.CreateIntCast(scoped_arg.value(),
                                          b_.getInt32Ty(),
                                          arg.type().IsSigned());
-    emit_signal(sig_number);
+    b_.CreateSignal(sig_number, call.loc, target_thread);
     return ScopedExpr();
   } else if (call.func == "strerror") {
     return visit(call.vargs.front());

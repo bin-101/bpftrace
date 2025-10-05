@@ -2088,36 +2088,25 @@ void IRBuilderBPF::CreateTracePrintk(Value *fmt_ptr,
                    loc);
 }
 
-void IRBuilderBPF::CreateSignal(Value *sig, const Location &loc)
+void IRBuilderBPF::CreateSignal(Value *sig,
+                                const Location &loc,
+                                bool target_thread)
 {
-  // long bpf_send_signal(u32 sig)
+  // long bpf_send_signal(u32 sig) / bpf_send_signal_thread(u32 sig)
   // Return: 0 or error
   FunctionType *signal_func_type = FunctionType::get(getInt64Ty(),
                                                      { getInt32Ty() },
                                                      false);
   PointerType *signal_func_ptr_type = PointerType::get(getContext(), 0);
+  auto helper_id = target_thread ? BPF_FUNC_send_signal_thread
+                                 : BPF_FUNC_send_signal;
   Constant *signal_func = ConstantExpr::getCast(Instruction::IntToPtr,
-                                                getInt64(BPF_FUNC_send_signal),
+                                                getInt64(helper_id),
                                                 signal_func_ptr_type);
-  CallInst *call = createCall(signal_func_type, signal_func, { sig }, "signal");
-  CreateHelperErrorCond(call, BPF_FUNC_send_signal, loc);
-}
-
-void IRBuilderBPF::CreateSignalThread(Value *sig, const Location &loc)
-{
-  // long bpf_send_signal_thread(u32 sig)
-  // Return: 0 or error
-  FunctionType *signal_func_type = FunctionType::get(getInt64Ty(),
-                                                     { getInt32Ty() },
-                                                     false);
-  PointerType *signal_func_ptr_type = PointerType::get(getContext(), 0);
-  Constant *signal_func = ConstantExpr::getCast(
-      Instruction::IntToPtr,
-      getInt64(BPF_FUNC_send_signal_thread),
-      signal_func_ptr_type);
+  const auto call_name = target_thread ? "signal_thread" : "signal";
   CallInst *call =
-      createCall(signal_func_type, signal_func, { sig }, "signal_thread");
-  CreateHelperErrorCond(call, BPF_FUNC_send_signal_thread, loc);
+      createCall(signal_func_type, signal_func, { sig }, call_name);
+  CreateHelperErrorCond(call, helper_id, loc);
 }
 
 void IRBuilderBPF::CreateOverrideReturn(Value *ctx, Value *rc)

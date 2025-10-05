@@ -1,28 +1,29 @@
-# IRBuilderBPF::CreateSignal に追加引数を持たせるか、新関数を用意するか
+# IRBuilderBPF::CreateSignal のターゲット指定方法検討メモ
 
-## 1. 現状
-- `IRBuilderBPF::CreateSignal(sig, loc)` が既存 (`BPF_FUNC_send_signal` 用)。
-- Issue #3537 で `CreateSignalThread(sig, loc)` を新設し、`BPF_FUNC_send_signal_thread` を呼ぶよう実装。
+## 1. 選択肢
+- **新しい関数を作る:** `CreateSignalThread` のようにターゲットごとに関数を分ける。
+- **既存関数に引数を追加:** `CreateSignal(sig, loc, bool thread)` のようにフラグや enum を渡す。
 
-## 2. `CreateSignal` に引数を追加する案
+## 2. bool で引数に持たせる案（最終的に採用）
 ### メリット
-- 似た処理が1箇所にまとまるため、重複コードを避けられる。
-- 将来的に別ターゲットが増えても引数の拡張で対応できそう。
-### デメリット
-- 呼び出し側に `enum class SignalTarget { CurrentPid, CurrentTid };` 等を導入する必要がある。
-- 既存コードとの互換性（引数の追加によるオーバーロード整理）を慎重に扱う必要がある。
-- `CreateSignal(...)` の内部が条件分岐で複雑になる。
+- 既存の `CreateSignal` を拡張するだけで済み、呼び出し側の変更も最小限。
+- 別関数を増やさずに `BPF_FUNC_send_signal` / `_thread` を切り替えられる。
+- `CreateGetTid` など、同様に bool で切り替えている既存関数とスタイルが揃う。
 
-## 3. 新しい関数を作る案（現行）
-### メリット
-- 呼び出し側で意図が明確（`CreateSignalThread`）。
-- 既存の `CreateSignal` のシグネチャを変えないため安全。
-- 実装もほぼコピーで済むため変更が小さい。
 ### デメリット
-- 似たコード（Helper call）を2箇所維持する必要がある。
-- ターゲットが増えるたびに関数が増え、命名が煩雑になる恐れ。
+- `true/false` の意味を覚えておく必要がある（コメントで補足）。
+- 将来ターゲット種別が増えた際は拡張が難しく、enum への移行が必要。
+
+## 3. 関数を分ける案
+### メリット
+- 呼び出し側の意図が明確で、`CreateSignalThread` と書けば thread 用と一目で分かる。
+- 拡張時の分岐が不要。
+
+### デメリット
+- 似たコードを複数箇所に持つことになる。
+- ターゲットが増えるたびに関数が増殖する。
 
 ## 4. 結論
-- 今回のようにターゲットが2種類だけの場合は、後方互換性の観点から **新しい関数を用意する現行案の方が安全**。
-- 将来ターゲットがさらに増えるような要件が出た場合は、`CreateSignal(sig, loc, SignalTarget target)` のように統合することを検討すると良い。
+- 今回はターゲットが 2 種類だけで、既存のスタイルに倣う目的もあり **bool 引数を追加する方針を採用** した。
+- 将来的にターゲットが増えることが分かったら、`enum class SignalTarget` 等に置き換えても良い。
 
