@@ -541,7 +541,7 @@ static const std::map<std::string, call_spec> CALL_SPEC = {
         arg_type_spec{ .type=Type::string, .literal=true } } } },
   { "signal",
     { .min_args=1,
-      .max_args=1,
+      .max_args=2,
        } },
   { "sizeof",
     { .min_args=1,
@@ -832,6 +832,12 @@ void SemanticAnalyser::visit(Identifier &identifier)
       identifier.addError()
           << "Invalid PID namespace mode: " << identifier.ident
           << " (expects: curr_ns or init)";
+    }
+  } else if (func_ == "signal") {
+    if (identifier.ident != "current_pid" &&
+        identifier.ident != "current_tid") {
+      identifier.addError() << "Invalid signal mode: " << identifier.ident
+                            << " (expects: current_pid or current_tid)";
     }
   } else {
     // Final attempt: try to parse as a stack mode.
@@ -1739,6 +1745,15 @@ void SemanticAnalyser::visit(Call &call)
     } else if (arg.is<NegativeInteger>() || !arg.type().IsIntTy()) {
       call.addError()
           << "signal only accepts literal strings and positive integers";
+    }
+    if (call.vargs.size() == 2) {
+      auto &arg = call.vargs.at(1);
+      if (!(arg.as<Identifier>())) {
+        call.addError()
+            << call.func
+            << "() only supports curr_tid or current_pid as the second argument ("
+            << arg.type().GetTy() << " provided)";
+      }
     }
   } else if (call.func == "path") {
     auto *probe = get_probe(call, call.func);
