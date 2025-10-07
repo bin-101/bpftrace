@@ -3548,6 +3548,17 @@ TEST_F(SemanticAnalyserTest, signal)
   bpftrace->add_param("hello");
   test("k:f { signal($1) }", UnsafeMode::Enable, Mock{ *bpftrace });
   test("k:f { signal($2) }", UnsafeMode::Enable, Mock{ *bpftrace }, Error{});
+
+  // signal mode TODO: もうちょっといい感じのコメントにする
+  test("k:f { signal(1, current_pid) }", UnsafeMode::Enable);
+  test("k:f { signal(1, current_tid) }", UnsafeMode::Enable);
+
+  // invalid signal mode
+  test("k:f { signal(1, xxx) }",
+       UnsafeMode::Enable,
+       Error{}); // TODO: 具体的なエラーメッセージを書く
+  test("k:f { signal(1, 1000) }", UnsafeMode::Enable, Error{});
+  test("k:f { signal(1, \"current_pid\") }", UnsafeMode::Enable, Error{});
 }
 
 TEST_F(SemanticAnalyserTest, strncmp)
