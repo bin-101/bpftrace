@@ -1916,7 +1916,7 @@ ScopedExpr CodegenLLVM::visit(Call &call)
   } else if (call.func == "signal") {
     bool target_thread = false;
     if (call.vargs.size() == 2 &&
-        call.vargs.at(1).as<String>()->value == "thread")
+        call.vargs.at(1).as<Identifier>()->ident == "current_tid")
       target_thread = true;
 
     auto &arg = call.vargs.at(0);
