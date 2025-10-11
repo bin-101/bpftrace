@@ -848,7 +848,7 @@ For kretprobe and uretprobe, its type is uint64, but for fexit it depends. You c
 
 **Kernel** 5.3（`current_pid`） / 5.6（`current_tid`）
 
-This utilizes the BPF helpers `bpf_send_signal` and `bpf_send_signal_thread`, depending on the second argument.
+This utilizes either the BPF helper `bpf_send_signal` or the BPF helper `bpf_send_signal_thread`, depending on the second argument.
 
 Probe types: k(ret)probe, u(ret)probe, USDT, profile
 
