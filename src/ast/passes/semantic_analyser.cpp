@@ -1749,10 +1749,10 @@ void SemanticAnalyser::visit(Call &call)
     if (call.vargs.size() == 2) {
       auto &arg = call.vargs.at(1);
       if (!(arg.as<Identifier>())) {
-        call.addError()
-            << call.func
-            << "() only supports curr_tid or current_pid as the second argument ("
-            << arg.type().GetTy() << " provided)";
+        call.addError() << call.func
+                        << "() only supports curr_tid or current_pid as the "
+                           "second argument ("
+                        << arg.type().GetTy() << " provided)";
       }
     }
   } else if (call.func == "path") {
