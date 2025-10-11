@@ -1265,13 +1265,3 @@ macro username() {
 // **async**
 //
 // Set all values (for all keys) in the map to zero.
-
-signalの実装を変更したので、書き換えてほしいです。signal以外は変更しなくて構いません。
-具体的には以下のように変えました。他のところと同じように書いてほしいです。nsecsが特に参考になると思います
-- 第二引数として、current_tidかcurrent_pidを指定できる。デフォルトはcurrent_pidになる。
-- current_tidを指定した場合、signalを送る対象はtraceしているスレッドになる
-以下のことを参考にしてください。
-- current_pidはkernel5.3だが、current_tidは5.6
-- nsecsのように、変数名ではなく、tidのように[current_pid|current_tid]と書いてほしい
-- 基本的に、今の文章はそのまま残したい。変える必要があるなら変えるが、現状のものを尊重したい。自分は新参者で、これは大規模なOSSなので
-- tidと同様に、引数の有無を複数のvariantで表現したい。そのため、4行に渡って書く
