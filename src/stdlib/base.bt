@@ -856,7 +856,7 @@ macro retval() {
 //
 // **Kernel** 5.3（`current_pid`） / 5.6（`current_tid`）
 //
-// This utilizes the BPF helpers `bpf_send_signal` and `bpf_send_signal_thread`
+// This utilizes the BPF helpers `bpf_send_signal` and `bpf_send_signal_thread`, depending on the second argument.
 //
 // Probe types: k(ret)probe, u(ret)probe, USDT, profile
 //
