@@ -20,7 +20,7 @@ and this project adheres to
   - [#4540](https://github.com/bpftrace/bpftrace/pull/4540)
 - Automatic dereferencing is supported via `.`, now the preferred access operator
   - [#4673](https://github.com/bpftrace/bpftrace/pull/4673)
-- Add support for signal() second argument choosing between current_tid and current_pid
+- Allow `signal()` to target either the current process or the current thread via an optional second argument
   - [#TODO](TODO)
 #### Changed
 - Apply `-B` buffering semantics to file outputs.
