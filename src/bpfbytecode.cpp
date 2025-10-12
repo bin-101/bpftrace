@@ -82,19 +82,8 @@ BpfBytecode::BpfBytecode(std::span<const std::byte> elf)
 
 const BpfProgram &BpfBytecode::getProgramForProbe(const Probe &probe) const
 {
-  auto usdt_location_idx = (probe.type == ProbeType::usdt)
-                               ? std::make_optional<int>(
-                                     probe.usdt_location_idx)
-                               : std::nullopt;
-
-  auto prog = programs_.find(util::get_function_name_for_probe(
-      probe.name, probe.index, usdt_location_idx));
-  if (prog == programs_.end()) {
-    prog = programs_.find(util::get_function_name_for_probe(probe.orig_name,
-                                                            probe.index,
-                                                            usdt_location_idx));
-  }
-
+  auto prog = programs_.find(
+      util::get_function_name_for_probe(probe.name, probe.index));
   if (prog == programs_.end()) {
     std::stringstream msg;
     if (probe.name != probe.orig_name)
@@ -257,17 +246,6 @@ void BpfBytecode::load_progs(const RequiredResources &resources,
           log,
           "pointer arithmetic on ptr_or_null_ prohibited, null-check it first",
           ": result needs to be null-checked before accessing fields");
-
-      auto err_pos = log.find("from non-GPL compatible program");
-      if (err_pos != std::string_view::npos) {
-        LOG(ERROR) << "Your bpftrace program cannot load because you are using "
-                      "a license that is non-GPL compatible. License: "
-                   << config.license;
-        LOG(HINT)
-            << "Read more about BPF programs and licensing: "
-               "https://docs.kernel.org/bpf/"
-               "bpf_licensing.html#using-bpf-programs-in-the-linux-kernel";
-      }
 
       std::stringstream errmsg;
       errmsg << "Error loading BPF program for " << name << ".";

@@ -14,13 +14,14 @@
 #include <unistd.h>
 
 #include "aot/aot.h"
-#include "ast/attachpoint_parser.h"
 #include "ast/diagnostic.h"
 #include "ast/helpers.h"
 #include "ast/pass_manager.h"
+#include "ast/passes/attachpoint_passes.h"
 #include "ast/passes/clang_build.h"
 #include "ast/passes/clang_parser.h"
 #include "ast/passes/codegen_llvm.h"
+#include "ast/passes/control_flow_analyser.h"
 #include "ast/passes/fold_literals.h"
 #include "ast/passes/map_sugar.h"
 #include "ast/passes/named_param.h"
@@ -31,7 +32,6 @@
 #include "ast/passes/probe_prune.h"
 #include "ast/passes/recursion_check.h"
 #include "ast/passes/resource_analyser.h"
-#include "ast/passes/return_path_analyser.h"
 #include "ast/passes/semantic_analyser.h"
 #include "ast/passes/type_system.h"
 #include "benchmark.h"
@@ -44,6 +44,7 @@
 #include "globalvars.h"
 #include "lockdown.h"
 #include "log.h"
+#include "output/buffer_mode.h"
 #include "probe_matcher.h"
 #include "procmon.h"
 #include "run_bpftrace.h"
@@ -56,12 +57,6 @@
 using namespace bpftrace;
 
 namespace {
-enum class OutputBufferConfig {
-  UNSET = 0,
-  LINE,
-  FULL,
-  NONE,
-};
 
 enum class TestMode {
   NONE = 0,
@@ -331,14 +326,11 @@ struct Args {
 void CreateDynamicPasses(std::function<void(ast::Pass&& pass)> add)
 {
   add(ast::CreateFoldLiteralsPass());
-  add(ast::CreatePidFilterPass());
   add(ast::CreateClangBuildPass());
   add(ast::CreateTypeSystemPass());
   add(ast::CreateSemanticPass());
   add(ast::CreateProbePrunePass());
   add(ast::CreateResourcePass());
-  add(ast::CreateRecursionCheckPass());
-  add(ast::CreateReturnPathPass());
 }
 
 void CreateAotPasses(std::function<void(ast::Pass&& pass)> add)
@@ -350,8 +342,6 @@ void CreateAotPasses(std::function<void(ast::Pass&& pass)> add)
   add(ast::CreateSemanticPass());
   add(ast::CreateProbePrunePass());
   add(ast::CreateResourcePass());
-  add(ast::CreateRecursionCheckPass());
-  add(ast::CreateReturnPathPass());
 }
 
 ast::Pass printPass(const std::string& name)
@@ -683,15 +673,15 @@ bool is_colorize()
 static ast::ASTContext buildListProgram(const std::string& search)
 {
   ast::ASTContext ast("listing", search);
-  auto* ap = ast.make_node<ast::AttachPoint>(search, true, location());
+  auto* ap = ast.make_node<ast::AttachPoint>(search, true, ast::Location());
   auto* probe = ast.make_node<ast::Probe>(ast::AttachPointList({ ap }),
                                           nullptr,
-                                          location());
-  ast.root = ast.make_node<ast::Program>("",
+                                          ast::Location());
+  ast.root = ast.make_node<ast::Program>(ast::CStatementList(),
                                          nullptr,
                                          ast::ImportList(),
                                          ast::RootStatements({ probe }),
-                                         location());
+                                         ast::Location());
   return ast;
 }
 
@@ -797,10 +787,11 @@ int main(int argc, char* argv[])
                         .put(no_c_defs)
                         .put(no_types)
                         .add(ast::CreateParseAttachpointsPass(args.listing))
+                        .add(ast::CreateCheckAttachpointsPass(args.listing))
                         .add(CreateParseBTFPass())
                         .add(ast::CreateMapSugarPass())
                         .add(ast::CreateNamedParamsPass())
-                        .add(ast::CreateSemanticPass(args.listing))
+                        .add(ast::CreateSemanticPass())
                         .run();
 
     if (!pmresult) {
@@ -886,10 +877,11 @@ int main(int argc, char* argv[])
         .put(no_c_defs)
         .put(no_types)
         .add(ast::CreateParseAttachpointsPass(args.listing))
+        .add(ast::CreateCheckAttachpointsPass(args.listing))
         .add(CreateParseBTFPass())
         .add(ast::CreateMapSugarPass())
         .add(ast::CreateNamedParamsPass())
-        .add(ast::CreateSemanticPass(args.listing));
+        .add(ast::CreateSemanticPass());
 
     auto pmresult = pm.run();
     if (!pmresult) {
@@ -1020,5 +1012,6 @@ int main(int argc, char* argv[])
                       args.output_format,
                       c_definitions,
                       bytecode,
-                      std::move(args.named_params));
+                      std::move(args.named_params),
+                      args.obc);
 }

@@ -6,6 +6,16 @@
 
 namespace bpftrace::ast {
 
+const std::unordered_set<std::string> &getAssignRewriteFuncs()
+{
+  // Similarly these are syntactic sugar over operating on a map. This list
+  // could also be dynamically generated based on some underlying annotation.
+  static std::unordered_set<std::string> ASSIGN_REWRITE = {
+    "hist", "lhist", "count", "sum", "min", "max", "avg", "stats", "tseries",
+  };
+  return ASSIGN_REWRITE;
+}
+
 namespace {
 
 class MapDefaultKey : public Visitor<MapDefaultKey> {
@@ -26,7 +36,7 @@ public:
 
   [[nodiscard]] bool check(Map &map, bool indexed);
   void checkAccess(Map &map, bool indexed);
-  void checkCall(Map &map, bool indexed, Call &call);
+  void checkCall(Map &map, bool indexed);
 
   MapMetadata metadata;
 
@@ -57,6 +67,19 @@ public:
   void visit(Call &call);
 };
 
+class MapScalarCheck : public Visitor<MapScalarCheck> {
+public:
+  explicit MapScalarCheck(ASTContext &ast, MapMetadata &metadata)
+      : ast_(ast), metadata_(metadata) {};
+
+  using Visitor<MapScalarCheck>::visit;
+  void visit(Expression &expr);
+
+private:
+  ASTContext &ast_;
+  MapMetadata &metadata_;
+};
+
 } // namespace
 
 // These are special functions which are part of the map API, and operate
@@ -67,7 +90,7 @@ public:
 // specific function being called, and potentially respecting annotations on
 // these arguments.
 static std::unordered_set<std::string> RAW_MAP_ARG = {
-  "print", "clear", "zero", "len", "delete", "has_key",
+  "print", "clear", "zero", "len", "delete", "is_scalar",
 };
 
 void MapDefaultKey::visit(Map &map)
@@ -90,10 +113,12 @@ void MapDefaultKey::visit([[maybe_unused]] Typeof &typeof)
 {
   if (std::holds_alternative<Expression>(typeof.record)) {
     const auto &expr = std::get<Expression>(typeof.record);
-    if (expr.is<Map>()) {
-      // Do nothing; allow these to exist. It will extract the value of the map
-      // whether it is keyed or not.
-      return;
+    if (auto *map = expr.as<Map>()) {
+      // Don't de-sugar if it's a non-scalar map
+      auto val = metadata.scalar.find(map->ident);
+      if (val != metadata.scalar.end() && !val->second) {
+        return;
+      }
     }
   }
   Visitor<MapDefaultKey>::visit(typeof);
@@ -155,27 +180,20 @@ void MapDefaultKey::checkAccess(Map &map, bool indexed)
 {
   if (!check(map, indexed)) {
     if (indexed) {
-      map.addError() << map.ident
-                     << " used as a map with an explicit key (non-scalar map), "
-                        "previously used without an explicit key (scalar map)";
+      metadata.bad_scalar_access.insert(&map);
     } else {
-      map.addError()
-          << map.ident
-          << " used as a map without an explicit key (scalar map), previously "
-             "used with an explicit key (non-scalar map)";
+      metadata.bad_indexed_access.insert(&map);
     }
   }
 }
 
-void MapDefaultKey::checkCall(Map &map, bool indexed, Call &call)
+void MapDefaultKey::checkCall(Map &map, bool indexed)
 {
   if (!check(map, indexed)) {
     if (indexed) {
-      map.addError() << "call to " << call.func
-                     << "() expects a map with explicit keys (non-scalar map)";
+      metadata.bad_scalar_call.insert(&map);
     } else {
-      map.addError() << "call to " << call.func
-                     << "() expects a map without explicit keys (scalar map)";
+      metadata.bad_indexed_call.insert(&map);
     }
   }
 }
@@ -192,11 +210,11 @@ void MapDefaultKey::visit(Call &call)
       if (call.func == "delete") {
         if (call.vargs.size() == 1) {
           // Inject the default key.
-          checkCall(*map, false, call);
+          checkCall(*map, false);
           auto *index = ast_.make_node<Integer>(0, Location(map->loc));
           call.vargs.emplace_back(index);
         } else if (call.vargs.size() == 2) {
-          checkCall(*map, true, call);
+          checkCall(*map, true);
         } else {
           // Unfortunately there's no good way to handle this after desugaring.
           // The actual `delete` function requires two arguments (fixed), but
@@ -204,10 +222,13 @@ void MapDefaultKey::visit(Call &call)
           call.addError() << "delete() requires 1 or 2 arguments ("
                           << call.vargs.size() << " provided)";
         }
-      } else if (call.func == "has_key") {
-        checkCall(*map, true, call);
       } else if (call.func == "len") {
-        checkCall(*map, true, call);
+        checkCall(*map, true);
+      } else if (call.func == "is_scalar") {
+        if (call.vargs.size() != 1) {
+          call.addError() << "is_scalar() requires 1 argument ("
+                          << call.vargs.size() << " provided)";
+        }
       }
     } else {
       if (call.func == "delete") {
@@ -230,9 +251,7 @@ void MapDefaultKey::visit(For &for_loop)
 {
   if (auto *map = for_loop.iterable.as<Map>()) {
     if (!check(*map, true)) {
-      map->addError() << map->ident
-                      << " has no explicit keys (scalar map), and "
-                         "cannot be used for iteration";
+      metadata.bad_iterator.insert(map);
     }
   } else {
     // If the map is used for the range in any way, it needs
@@ -258,18 +277,12 @@ void MapFunctionAliases::visit(Call &call)
   }
 }
 
-// Similarly these are syntactic sugar over operating on a map. This list could
-// also be dynamically generated based on some underlying annotation.
-static std::unordered_set<std::string> ASSIGN_REWRITE = {
-  "hist", "lhist", "count", "sum", "min", "max", "avg", "stats", "tseries",
-};
-
 static std::optional<Expression> injectMap(Expression expr,
                                            Map *map,
                                            Expression key)
 {
   if (auto *call = expr.as<Call>()) {
-    if (ASSIGN_REWRITE.contains(call->func)) {
+    if (getAssignRewriteFuncs().contains(call->func)) {
       auto args = std::move(call->vargs);
       call->vargs.emplace_back(map);
       call->vargs.emplace_back(key);
@@ -303,10 +316,31 @@ void MapAssignmentCall::visit(Statement &stmt)
 
 void MapAssignmentCheck::visit(Call &call)
 {
-  if (ASSIGN_REWRITE.contains(call.func) && call.injected_args == 0) {
+  if (getAssignRewriteFuncs().contains(call.func) && call.injected_args == 0) {
     call.addError() << call.func << "() must be assigned directly to a map";
   }
   Visitor<MapAssignmentCheck>::visit(call);
+}
+
+void MapScalarCheck::visit(Expression &expr)
+{
+  Visitor<MapScalarCheck>::visit(expr);
+
+  if (auto *call = expr.as<Call>()) {
+    if (call->func == "is_scalar") {
+      if (auto *map = call->vargs.at(0).as<Map>()) {
+        auto val = metadata_.scalar.find(map->ident);
+        if (val == metadata_.scalar.end()) {
+          expr.node().addError() << "Unknown map: " << map->ident;
+          return;
+        }
+        expr.value = ast_.make_node<Boolean>(val->second, Location(call->loc));
+      } else {
+        expr.node().addError()
+            << call->func << "() expects a map for the first argument";
+      }
+    }
+  }
 }
 
 Pass CreateMapSugarPass()
@@ -322,8 +356,13 @@ Pass CreateMapSugarPass()
     }
     MapAssignmentCall sugar(ast);
     sugar.visit(ast.root);
+
     MapAssignmentCheck check;
     check.visit(ast.root);
+
+    MapScalarCheck scalar(ast, defaults.metadata);
+    scalar.visit(ast.root);
+
     return std::move(defaults.metadata);
   };
 

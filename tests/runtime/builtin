@@ -114,7 +114,7 @@ PROG i:ms:1 { printf("SUCCESS %p\n", curtask); exit(); }
 EXPECT_REGEX SUCCESS 0x[0-9a-f]+
 
 NAME curtask_field
-PROG struct task_struct {int x;} i:ms:1 { printf("SUCCESS %d\n", curtask->x); exit(); }
+PROG struct task_struct {int x;} i:ms:1 { printf("SUCCESS %d\n", curtask.x); exit(); }
 EXPECT_REGEX SUCCESS -?[0-9][0-9]*
 
 NAME rand
@@ -126,7 +126,7 @@ PROG i:ms:1 { printf("SUCCESS %llu\n", cgroup); exit(); }
 EXPECT_REGEX SUCCESS [0-9]+
 
 NAME ctx
-PROG struct x {unsigned long x}; i:ms:1 { printf("SUCCESS %lu\n", ((struct x*)ctx)->x); exit(); }
+PROG struct x {unsigned long x}; i:ms:1 { printf("SUCCESS %lu\n", ((struct x*)ctx).x); exit(); }
 EXPECT_REGEX SUCCESS [0-9]+
 
 NAME cat
@@ -223,6 +223,10 @@ REQUIRES_FEATURE dwarf
 TIMEOUT 5
 BEFORE ./testprogs/uprobe_test
 
+NAME mixed probe args
+PROG rawtracepoint:irq_handler_entry, rawtracepoint:irq_handler_exit, fentry:do_nanosleep { args }
+EXPECT Attached 3 probes
+
 NAME jiffies
 PROG i:ms:1 { printf("SUCCESS %llu\n", jiffies); exit(); }
 EXPECT_REGEX SUCCESS [0-9]+
@@ -255,6 +259,7 @@ EXPECT 1 1
 ARCH x86_64
 
 NAME usermode_builtin_in_unsupported_arch
-PROG begin { printf("%d ", usermode);  } end { print(usermode); }
-EXPECT ERROR: 'usermode' builtin is only supported on x86_64
+PROG i:1ms { print(usermode); exit(); }
+EXPECT_REGEX .*ERROR: 'usermode' builtin is only supported on x86_64.*
 ARCH aarch64
+WILL_FAIL

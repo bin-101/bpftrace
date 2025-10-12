@@ -2,9 +2,11 @@
 #include <cstdint>
 #include <cstring>
 
-#include "ast/attachpoint_parser.h"
+#include "ast/passes/ap_expansion.h"
+#include "ast/passes/attachpoint_passes.h"
 #include "ast/passes/clang_parser.h"
 #include "ast/passes/codegen_llvm.h"
+#include "ast/passes/control_flow_analyser.h"
 #include "ast/passes/field_analyser.h"
 #include "ast/passes/macro_expansion.h"
 #include "ast/passes/map_sugar.h"
@@ -50,31 +52,32 @@ static std::string kprobe_name(const std::string &attach_point,
   return "kprobe:" + attach_point + str;
 }
 
-static auto parse_probe(const std::string &str,
-                        BPFtrace &bpftrace,
-                        int usdt_num_locations = 0)
+static auto parse_probe(const std::string &str, BPFtrace &bpftrace)
 {
   ast::ASTContext ast("stdin", str);
 
   ast::TypeMetadata no_types; // No external types defined.
 
   // N.B. Don't use tracepoint format parser here.
-  auto usdt = get_mock_usdt_helper(usdt_num_locations);
   auto ok = ast::PassManager()
                 .put(ast)
                 .put(bpftrace)
                 .put(no_types)
                 .add(CreateParsePass())
                 .add(ast::CreateParseAttachpointsPass())
-                .add(ast::CreateProbeExpansionPass())
+                .add(ast::CreateCheckAttachpointsPass())
+                .add(ast::CreateControlFlowPass())
+                .add(ast::CreateApExpansionPass())
                 .add(ast::CreateMacroExpansionPass())
+                .add(ast::CreateProbeExpansionPass())
                 .add(ast::CreateFieldAnalyserPass())
                 .add(ast::CreateClangParsePass())
+                .add(ast::CreateProbeExpansionPass({ ProbeType::tracepoint }))
                 .add(ast::CreateMapSugarPass())
                 .add(ast::CreateNamedParamsPass())
                 .add(ast::CreateSemanticPass())
                 .add(ast::CreateLLVMInitPass())
-                .add(ast::CreateCompilePass(std::ref(*usdt)))
+                .add(ast::CreateCompilePass())
                 .run();
   ASSERT_TRUE(ok && ast.diagnostics().ok());
 }
@@ -344,7 +347,7 @@ TEST(bpftrace, add_probes_uprobe_string_offset)
 TEST(bpftrace, add_probes_usdt)
 {
   auto bpftrace = get_strict_mock_bpftrace();
-  parse_probe("usdt:/bin/sh:prov1:mytp {}", *bpftrace, 1);
+  parse_probe("usdt:/bin/sh:prov1:mytp {}", *bpftrace);
 
   ASSERT_EQ(1U, bpftrace->get_probes().size());
   ASSERT_EQ(0U, bpftrace->get_special_probes().size());
@@ -362,28 +365,18 @@ TEST(bpftrace, add_probes_usdt_empty_namespace_conflict)
               get_symbols_from_usdt(no_pid, "/bin/sh"))
       .Times(1);
 
-  parse_probe("usdt:/bin/sh:tp {}", *bpftrace, 1);
+  parse_probe("usdt:/bin/sh:tp {}", *bpftrace);
 }
 
 TEST(bpftrace, add_probes_usdt_duplicate_markers)
 {
   auto bpftrace = get_strict_mock_bpftrace();
 
-  parse_probe("usdt:/bin/sh:prov1:mytp {}", *bpftrace, 3);
+  parse_probe("usdt:/bin/sh:prov1:mytp {}", *bpftrace);
 
-  ASSERT_EQ(3U, bpftrace->get_probes().size());
+  ASSERT_EQ(1U, bpftrace->get_probes().size());
   ASSERT_EQ(0U, bpftrace->get_special_probes().size());
   check_usdt(bpftrace->get_probes().at(0),
-             "/bin/sh",
-             "prov1",
-             "mytp",
-             "usdt:/bin/sh:prov1:mytp");
-  check_usdt(bpftrace->get_probes().at(1),
-             "/bin/sh",
-             "prov1",
-             "mytp",
-             "usdt:/bin/sh:prov1:mytp");
-  check_usdt(bpftrace->get_probes().at(2),
              "/bin/sh",
              "prov1",
              "mytp",
@@ -810,6 +803,9 @@ TEST(bpftrace, resolve_timestamp)
 {
   static const auto bootmode = static_cast<uint32_t>(TimestampMode::boot);
   auto bpftrace = get_strict_mock_bpftrace();
+
+  if (std::chrono::system_clock::period::den < 1000000000)
+    GTEST_SKIP() << "Timestamp test requires nanosecond precision";
 
   // Basic sanity check
   bpftrace->boottime_ = { .tv_sec = 3, .tv_nsec = 0 };

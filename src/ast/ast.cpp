@@ -115,13 +115,13 @@ std::string opstr(const Unop &unop)
       return "-";
     case Operator::MUL:
       return "dereference";
-    case Operator::INCREMENT:
-      if (unop.is_post_op)
-        return "++ (post)";
+    case Operator::POST_INCREMENT:
+      return "++ (post)";
+    case Operator::PRE_INCREMENT:
       return "++ (pre)";
-    case Operator::DECREMENT:
-      if (unop.is_post_op)
-        return "-- (post)";
+    case Operator::POST_DECREMENT:
+      return "-- (post)";
+    case Operator::PRE_DECREMENT:
       return "-- (pre)";
     default:
       return {};
@@ -152,10 +152,11 @@ bool is_comparison_op(Operator op)
     case Operator::BXOR:
     case Operator::LEFT:
     case Operator::RIGHT:
-    case Operator::INVALID:
     case Operator::ASSIGN:
-    case Operator::INCREMENT:
-    case Operator::DECREMENT:
+    case Operator::PRE_INCREMENT:
+    case Operator::PRE_DECREMENT:
+    case Operator::POST_INCREMENT:
+    case Operator::POST_DECREMENT:
     case Operator::LNOT:
     case Operator::BNOT:
       return false;
@@ -375,7 +376,7 @@ void AttachPoint::set_index(int index)
 
 std::string Probe::args_typename() const
 {
-  return "struct " + orig_name + "_args";
+  return "struct " + orig_name + "_" + attach_points.front()->func + "_args";
 }
 
 int Probe::index() const

@@ -343,10 +343,9 @@ This utilizes the BPF helper `get_current_uid_gid`
 ### has_key
 - `boolean has_key(map m, mapkey k)`
 
-Return true (1) if the key exists in this map.
-Otherwise return false (0).
+Return `true` if the key exists in this map.
+Otherwise return `false`.
 Error if called with a map that has no keys (aka scalar map).
-Return value can also be used for scratch variables and map keys/values.
 
 ```
 kprobe:dummy {
@@ -359,9 +358,6 @@ kprobe:dummy {
     if (has_key(@scalar)) { // error
       print(("hello"));
     }
-
-    $a = has_key(@associative, (1,2)); // ok
-    @b[has_key(@associative, (1,2))] = has_key(@associative, (1,2)); // ok
 }
 ```
 
@@ -710,7 +706,7 @@ be rejected.
 interval:s:1 {
   $runqueues = (struct rq *)percpu_kaddr("runqueues", 0);
   if ($runqueues != 0) {         // The check is mandatory here
-    print($runqueues->nr_running);
+    print($runqueues.nr_running);
   }
 }
 ```
@@ -903,12 +899,12 @@ Usage
 ```
 # cat dump.bt
 fentry:napi_gro_receive {
-  $ret = skboutput("receive.pcap", args.skb, args.skb->len, 0);
+  $ret = skboutput("receive.pcap", args.skb, args.skb.len, 0);
 }
 
 fentry:dev_queue_xmit {
   // setting offset to 14, to exclude ethernet header
-  $ret = skboutput("output.pcap", args.skb, args.skb->len, 14);
+  $ret = skboutput("output.pcap", args.skb, args.skb.len, 14);
   printf("skboutput returns %d\n", $ret);
 }
 
@@ -938,8 +934,8 @@ This function returns a `uint64` unique number on success, or 0 if **sk** is NUL
 ```
 fentry:tcp_rcv_established
 {
-  $cookie = socket_cookie(args->sk);
-  @psize[$cookie] = hist(args->skb->len);
+  $cookie = socket_cookie(args.sk);
+  @psize[$cookie] = hist(args.skb.len);
 }
 ```
 
@@ -979,6 +975,9 @@ When available (starting from kernel 5.5, see the `--info` flag) bpftrace will a
 
 
 ### strcap
+- `int64 strcap(string exp)`
+- `int64 strcap(int8 exp[])`
+- `int64 strcap(int8 *exp)`
 
 Returns the "capacity" of a string-like object.
 
@@ -988,7 +987,7 @@ bound searches and lookups without needing to scan the string itself.
 
 
 ### strcontains
-- `int64 strcontains(const char *haystack, const char *needle)`
+- `bool strcontains(string haystack, string needle)`
 
 Compares whether the string haystack contains the string needle.
 
@@ -996,14 +995,13 @@ If needle is contained then true is returned, else false is returned.
 
 
 ### strerror
-- `strerror_t strerror(int error)`
+- `string strerror(int error)`
 
 Convert errno code to string.
-This is done asynchronously in userspace when the strerror value is printed, hence the returned value can only be used for printing.
 
 ```
 #include <errno.h>
-BEGIN {
+begin {
   print(strerror(EPERM));
 }
 ```
@@ -1033,6 +1031,9 @@ bpftrace also supports the following format string extensions:
 
 
 ### strlen
+- `int64 strlen(string exp)`
+- `int64 strlen(int8 exp[])`
+- `int64 strlen(int8 *exp)`
 
 Returns the length of a string-like object.
 
@@ -1049,10 +1050,9 @@ The use of the `==` and `!=` operators is recommended over calling `strncmp` dir
 
 
 ### strstr
+- `int64 strstr(string haystack, string needle)`
 
-Compares whether the string haystack contains the string needle.
-
-If needle is contained then true is returned, else false is returned.
+Returns the index of the first occurrence of the string needle in the string haystack. If needle is not in haystack then -1 is returned.
 
 
 ### system
@@ -1347,7 +1347,7 @@ Count how often this function is called.
 
 Using `@=count()` is conceptually similar to `@++`.
 The difference is that the `count()` function uses a map type optimized for
-performance and correctness using cheap, thread-safe writes (PER_CPU). However, sync reads
+performance and correctness using cheap, thread-safe writes ([PERCPU](./language.md#percpu-types)). However, sync reads
 can be expensive as bpftrace needs to iterate over all the cpus to collect and
 sum these values.
 
@@ -1451,7 +1451,7 @@ Prints:
 * `max_t max(int64 n)`
 
 Update the map with `n` if `n` is bigger than the current value held.
-Similar to `count` this uses a PER_CPU map (thread-safe, fast writes, slow reads).
+Similar to `count` this uses a [PERCPU](./language.md#percpu-types) map (thread-safe, fast writes, slow reads).
 
 Note: this is different than the typical userspace `max()` in that bpftrace’s `max()`
 only takes a single argument. The logical "other" argument to compare to is the value
@@ -1479,7 +1479,7 @@ be returned.
 * `min_t min(int64 n)`
 
 Update the map with `n` if `n` is smaller than the current value held.
-Similar to `count` this uses a PER_CPU map (thread-safe, fast writes, slow reads).
+Similar to `count` this uses a [PERCPU](./language.md#percpu-types) map (thread-safe, fast writes, slow reads).
 
 See `max()` above for how this differs from the typical userspace `min()`.
 
@@ -1510,7 +1510,7 @@ Calculate the sum of all `n` passed.
 
 Using `@=sum(5)` is conceptually similar to `@+=5`.
 The difference is that the `sum()` function uses a map type optimized for
-performance and correctness using cheap, thread-safe writes (PER_CPU). However, sync reads
+performance and correctness using cheap, thread-safe writes ([PERCPU](./language.md#percpu-types)). However, sync reads
 can be expensive as bpftrace needs to iterate over all the cpus to collect and
 sum these values.
 

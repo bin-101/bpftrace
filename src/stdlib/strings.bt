@@ -14,12 +14,12 @@
 
 // Checks that this value is string-like.
 macro assert_str(exp) {
-  if (comptime is_str(exp)) {
+  if comptime is_str(exp) {
     true
-  } else if (comptime is_array(exp)) {
+  } else if comptime is_array(exp) {
     static_assert(typeinfo(exp[0]) == typeinfo(int8), "string-like arrays must contain a char-like type");
     true
-  } else if (comptime is_ptr(exp)) {
+  } else if comptime is_ptr(exp) {
     static_assert(typeinfo(exp[0]) == typeinfo(int8), "string-like pointers must point to a char-like type");
     true
   } else {
@@ -34,40 +34,35 @@ macro default_str_length() {
 }
 
 // Returns the length of a string-like object.
+// :variant int64 strlen(string exp)
+// :variant int64 strlen(int8 exp[])
+// :variant int64 strlen(int8 *exp)
 macro strlen($var) {
   assert_str($var);
-  if (comptime is_str($var)) {
-    __strnlen(&$var, sizeof($var))
-  } else if (comptime is_array($var)) {
-    __strnlen($var, sizeof($var))
+  let $sz = (int64)0;
+  if comptime is_str($var) {
+    $sz = __strnlen(&$var, sizeof($var));
+  } else if comptime is_array($var) {
+    $sz = __strnlen($var, sizeof($var));
   } else {
-    __strnlen($var, default_str_length())
+    $sz = __strnlen($var, default_str_length());
   }
+  (uint64)$sz
 }
+
 macro strlen(exp) {
   assert_str(exp);
-  if (comptime is_str(exp) || is_array(exp)) {
+  if comptime (is_str(exp) || is_array(exp)) {
     // This must be unbound, unfortunately we need to bind it.
     let $x = exp;
     strlen($x)
   } else {
-    __strnlen(exp, default_str_length())
+    (uint64)__strnlen(exp, default_str_length())
   }
 }
+
 macro __strnlen(ptr, max_size) {
-  $sz = __bpf_strnlen(ptr, (int64)max_size);
-  if ($sz >= 0) {
-    (uint64)$sz
-  } else {
-    $sz = 0;
-    for ($i : ((uint64)0)..((uint64)max_size)) {
-      if (ptr[$i] == 0) {
-        break;
-      }
-      $sz += 1;
-    }
-    (uint64)$sz
-  }
+  __bpf_strnlen(ptr, (int64)max_size)
 }
 
 // Returns the "capacity" of a string-like object.
@@ -75,77 +70,36 @@ macro __strnlen(ptr, max_size) {
 // In most cases this is the same as the length, but for bpftrace-native
 // strings and arrays, this is the underlying object capacity. This is used to
 // bound searches and lookups without needing to scan the string itself.
+// :variant int64 strcap(string exp)
+// :variant int64 strcap(int8 exp[])
+// :variant int64 strcap(int8 *exp)
 macro strcap(exp) {
   assert_str(exp);
-  if (comptime is_str(exp)) {
+  if comptime is_str(exp) {
     sizeof(exp)
-  } else if (comptime is_array(exp)) {
+  } else if comptime is_array(exp) {
     sizeof(exp)/sizeof(exp[0])
   } else {
     strlen(exp) // Pointer, so pass by value.
   }
 }
 
-// Compares whether the string haystack contains the string needle.
-//
-// If needle is contained then true is returned, else false is returned.
+// Returns the index of the first occurrence of the string needle in the string haystack. If needle is not in haystack then -1 is returned.
+// :variant int64 strstr(string haystack, string needle)
 macro strstr($haystack, $needle) {
   assert_str($haystack);
   assert_str($needle);
-  let $index = -1;
   let $haystack_size = strcap($haystack);
   let $needle_size = strcap($needle);
   if ($needle_size == 0) {
     // Special case: the needle is zero-sized.
-    $index = 0;
+    0
   } else if ($needle[0] == 0) {
     // Special case: the needle is empty.
-    $index = 0;
-  } else if (__bpf_strnstr(&$haystack, &$needle, (int64)$haystack_size, &$index) >= 0) {
-    // The index will be already set.
+    0
   } else {
-    let $found = false;
-    for ($i : ((uint64)0)..$haystack_size) {
-      // Help the verifier know this is safe. This is only needed if the type
-      // is a string, because it will refer back to BPF memory and the function
-      // needs to do a bounds check.
-      if (comptime is_str($haystack) || is_array($haystack)) {
-        if ($i >= sizeof($haystack)) {
-          break;
-        }
-      }
-      if ($haystack[$i] == 0) {
-        break;
-      }
-      for ($j : ((uint64)0)..$needle_size) {
-        // Help the verifier know this is safe.
-        if (comptime is_str($needle) || is_array($needle)) {
-          if ($j >= sizeof($needle)) {
-            break;
-          }
-        }
-        if ($needle[$j] == 0) {
-          $index = (int64)$i;
-          $found = true;
-          break;
-        }
-        let $k = $i + $j;
-        // Help the verifier a bit more.
-        if (comptime is_str($haystack) || is_array($haystack)) {
-          if ($k >= sizeof($haystack)) {
-            break;
-          }
-        }
-        if ($haystack[$k] != $needle[$j]) {
-          break;
-        }
-      }
-      if ($found) {
-        break;
-      }
-    }
+    __bpf_strnstr(&$haystack, &$needle, (int64)$haystack_size, (int64)$needle_size)
   }
-  $index
 }
 macro strstr($haystack, needle) {
   let $needle = needle;
@@ -160,10 +114,30 @@ macro strstr(haystack, needle) {
   strstr($haystack, needle)
 }
 
-// :variant int64 strcontains(const char *haystack, const char *needle)
+// :variant bool strcontains(string haystack, string needle)
 // Compares whether the string haystack contains the string needle.
 //
 // If needle is contained then true is returned, else false is returned.
 macro strcontains(haystack, needle) {
   strstr(haystack, needle) >= 0
+}
+
+// :variant string strerror(int error)
+//
+// Convert errno code to string.
+//
+// ```
+// #include <errno.h>
+// begin {
+//   print(strerror(EPERM));
+// }
+// ```
+macro strerror(errno) {
+  let $v : string[64];
+  // Ensure that the size of the string is equal to the size of the returned
+  // buffer. On the C side, it will be a compilation error if any of the
+  // strings exceed this size.
+  static_assert(sizeof($v) == sizeof(*__strerror((int32)errno, &$v)), "$v is sized correctly");
+  __strerror((int32)errno, &$v);
+  $v
 }

@@ -299,13 +299,11 @@ macro gid() {
   __builtin_gid
 }
 
-// :function has_key
 // :variant boolean has_key(map m, mapkey k)
 //
-// Return true (1) if the key exists in this map.
-// Otherwise return false (0).
+// Return `true` if the key exists in this map.
+// Otherwise return `false`.
 // Error if called with a map that has no keys (aka scalar map).
-// Return value can also be used for scratch variables and map keys/values.
 //
 // ```
 // kprobe:dummy {
@@ -318,11 +316,21 @@ macro gid() {
 //     if (has_key(@scalar)) { // error
 //       print(("hello"));
 //     }
-//
-//     $a = has_key(@associative, (1,2)); // ok
-//     @b[has_key(@associative, (1,2))] = has_key(@associative, (1,2)); // ok
 // }
 // ```
+macro has_key(@map, key) {
+  $key = key;
+  if comptime is_scalar(@map) {
+    fail("call to has_key() expects a map with explicit keys (non-scalar map)");
+    false
+  } else {
+    if comptime (typeinfo($key) != typeinfo(@map)) {
+      fail("Mismatch for has_key(): key param has type '%s' when map key type is '%s'",
+        typeinfo($key).2, typeinfo(@map).2);
+    }
+    __has_key((void *)&@map, (void *)&$key)
+  }
+}
 
 // :variant uint64 jiffies()
 // Jiffies of the kernel
@@ -461,6 +469,23 @@ macro jiffies() {
 // For maps, return the number of elements in the map.
 //
 // For kstack/ustack, return the depth (measured in # of frames) of the call stack.
+
+macro len(@map) {
+  if (comptime is_scalar(@map)) {
+    fail("call to len() expects a map with explicit keys (non-scalar map)")
+  } else {
+    (int64)__elem_count((void *)&@map)
+  }
+}
+
+macro len(e) {
+  if comptime (typeinfo(e) != typeinfo(ustack) && typeinfo(e) != typeinfo(kstack)) {
+    fail("call to len() expects a map, ustack, or kstack")
+  } else {
+    // This is handled in codegen for now
+    stack_len(e)
+  }
+}
 
 // :function macaddr
 // :variant macaddr_t macaddr(char [6] mac)
@@ -635,7 +660,7 @@ macro numaid() {
 // interval:s:1 {
 //   $runqueues = (struct rq *)percpu_kaddr("runqueues", 0);
 //   if ($runqueues != 0) {         // The check is mandatory here
-//     print($runqueues->nr_running);
+//     print($runqueues.nr_running);
 //   }
 // }
 // ```
@@ -909,12 +934,12 @@ macro retval() {
 // ```
 // # cat dump.bt
 // fentry:napi_gro_receive {
-//   $ret = skboutput("receive.pcap", args.skb, args.skb->len, 0);
+//   $ret = skboutput("receive.pcap", args.skb, args.skb.len, 0);
 // }
 //
 // fentry:dev_queue_xmit {
 //   // setting offset to 14, to exclude ethernet header
-//   $ret = skboutput("output.pcap", args.skb, args.skb->len, 14);
+//   $ret = skboutput("output.pcap", args.skb, args.skb.len, 14);
 //   printf("skboutput returns %d\n", $ret);
 // }
 //
@@ -943,8 +968,8 @@ macro retval() {
 // ```
 // fentry:tcp_rcv_established
 // {
-//   $cookie = socket_cookie(args->sk);
-//   @psize[$cookie] = hist(args->skb->len);
+//   $cookie = socket_cookie(args.sk);
+//   @psize[$cookie] = hist(args.skb.len);
 // }
 // ```
 //
@@ -974,19 +999,6 @@ macro retval() {
 // In case the string is longer than the specified length only `length - 1` bytes are copied and a NULL byte is appended at the end.
 //
 // When available (starting from kernel 5.5, see the `--info` flag) bpftrace will automatically use the `kernel` or `user` variant of `probe_read_{kernel,user}_str` based on the address space of `data`, see [Address-spaces](./language.md#address-spaces) for more information.
-
-// :function strerror
-// :variant strerror_t strerror(int error)
-//
-// Convert errno code to string.
-// This is done asynchronously in userspace when the strerror value is printed, hence the returned value can only be used for printing.
-//
-// ```
-// #include <errno.h>
-// BEGIN {
-//   print(strerror(EPERM));
-// }
-// ```
 
 // :function strftime
 // :variant timestamp strftime(const string fmt, int64 timestamp_ns)

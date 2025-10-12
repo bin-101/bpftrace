@@ -97,7 +97,7 @@ struct MyStruct {
 
 kprobe:dummy {
   $s = (struct MyStruct *) arg0;
-  print($s->y[0]);
+  print($s.y[0]);
 }
 ```
 
@@ -250,7 +250,15 @@ For user space symbols, symbolicate lazily/on-demand (`true`) or symbolicate eve
 
 Default: "GPL"
 
-The license bpftrace will use to load BPF programs into the linux kernel.
+The license bpftrace will use to load BPF programs into the linux kernel. Here is the list of accepted license strings:
+- GPL
+- GPL v2
+- GPL and additional rights
+- Dual BSD/GPL
+- Dual MIT/GPL
+- Dual MPL/GPL
+
+[Read More about BPF licenses](#bpf-license)
 
 ### log_size
 
@@ -756,12 +764,29 @@ The following relational operators are defined for integers and pointers.
 | == | left-hand expression equal to right-hand |
 | != | left-hand expression not equal to right-hand |
 
-The following relation operators are available for comparing strings and integer arrays.
+The following relation operators are available for comparing strings, integer arrays, and tuples.
 
 |     |     |
 | --- | --- |
 | == | left-hand string equal to right-hand |
 | != | left-hand string not equal to right-hand |
+
+**Note:** Tuple comparison works by comparing each element of both tuples
+with a logical && chain, e.g., the comparison of these two tuples
+```
+$x = ("hello", -6);
+$y = ("bye", -6);
+```
+turns this:
+```
+$x == $y
+```
+into this
+```
+($x.0 == $y.0 && $x.1 == $y.1)
+```
+So if comparing literal tuples that have nested expression with side effects
+they may not execute due to short-circuiting if previous elements are not equal.
 
 ### Assignment Operators
 
@@ -1054,7 +1079,7 @@ ctx pointer. Users can display the set of available fields for each iterator via
 -lv options as described below.
 
 ```
-iter:task { printf("%s:%d\n", ctx->task->comm, ctx->task->pid); }
+iter:task { printf("%s:%d\n", ctx.task.comm, ctx.task.pid); }
 
 /*
  * Sample output:
@@ -1069,7 +1094,7 @@ iter:task { printf("%s:%d\n", ctx->task->comm, ctx->task->pid); }
 
 ```
 iter:task_file {
-  printf("%s:%d %d:%s\n", ctx->task->comm, ctx->task->pid, ctx->fd, path(ctx->file->f_path));
+  printf("%s:%d %d:%s\n", ctx.task.comm, ctx.task.pid, ctx.fd, path(ctx.file.f_path));
 }
 
 /*
@@ -1086,7 +1111,7 @@ iter:task_file {
 
 ```
 iter:task_vma {
-  printf("%s %d %lx-%lx\n", comm, pid, ctx->vma->vm_start, ctx->vma->vm_end);
+  printf("%s %d %lx-%lx\n", comm, pid, ctx.vma.vm_start, ctx.vma.vm_end);
 }
 
 /*
@@ -1103,7 +1128,7 @@ It can be specified as an absolute or relative path to /sys/fs/bpf.
 **relative pin**
 
 ```
-iter:task:list { printf("%s:%d\n", ctx->task->comm, ctx->task->pid); }
+iter:task:list { printf("%s:%d\n", ctx.task.comm, ctx.task.pid); }
 
 /*
  * Sample output:
@@ -1115,7 +1140,7 @@ iter:task:list { printf("%s:%d\n", ctx->task->comm, ctx->task->pid); }
 
 ```
 iter:task_file:/sys/fs/bpf/files {
-  printf("%s:%d %s\n", ctx->task->comm, ctx->task->pid, path(ctx->file->f_path));
+  printf("%s:%d %s\n", ctx.task.comm, ctx.task.pid, path(ctx.file.f_path));
 }
 
 /*
@@ -1173,7 +1198,7 @@ fentry:tcp_reset
 
 ```
 fentry:x86_pmu_stop {
-  printf("pmu %s stop\n", str(args.event->pmu->name));
+  printf("pmu %s stop\n", str(args.event.pmu.name));
 }
 ```
 
@@ -1181,7 +1206,7 @@ The fget function takes one argument as file descriptor and you can access it vi
 
 ```
 fexit:fget {
-  printf("fd %d name %s\n", args.fd, str(retval->f_path.dentry->d_name.name));
+  printf("fd %d name %s\n", args.fd, str(retval.f_path.dentry.d_name.name));
 }
 
 /*
@@ -1233,7 +1258,7 @@ It is up to the user to perform [Type conversion](#type-conversion) when needed,
 
 kprobe:vfs_open
 {
-	printf("open path: %s\n", str(((struct path *)arg0)->dentry->d_name.name));
+	printf("open path: %s\n", str(((struct path *)arg0).dentry.d_name.name));
 }
 ```
 
@@ -1245,7 +1270,7 @@ If the kernel has BTF (BPF Type Format) data, all kernel structs are always avai
 
 ```
 kprobe:vfs_open {
-  printf("open path: %s\n", str(((struct path *)arg0)->dentry->d_name.name));
+  printf("open path: %s\n", str(((struct path *)arg0).dentry.d_name.name));
 }
 ```
 
@@ -1255,7 +1280,7 @@ You can optionally specify a kernel module, either to include BTF data from that
 kprobe:kvm:x86_emulate_insn
 {
   $ctxt = (struct x86_emulate_ctxt *) arg0;
-  printf("eip = 0x%lx\n", $ctxt->eip);
+  printf("eip = 0x%lx\n", $ctxt.eip);
 }
 ```
 
@@ -1271,7 +1296,7 @@ A common pattern to work around this is by storing the arguments in a map on fun
 kprobe:d_lookup
 {
 	$name = (struct qstr *)arg1;
-	@fname[tid] = $name->name;
+	@fname[tid] = $name.name;
 }
 
 kretprobe:d_lookup
@@ -1425,8 +1450,10 @@ After the "common" members listed first, the members are specific to the tracepo
 * `ur`
 
 `uprobe` s or user-space probes are the user-space equivalent of `kprobe` s.
-The same limitations that apply [kprobe and kretprobe](#kprobe-and-kretprobe) also apply to `uprobe` s and `uretprobe` s, namely: arguments are available via the `argN` and `sargN` builtins and can only be accessed with a uprobe (`sargN` is more common for older versions of golang).
+The same limitations that apply [kprobe and kretprobe](#kprobe-and-kretprobe) also apply to `uprobe` s and `uretprobe` s, namely: arguments are available via the `argN` builtins and can only be accessed with a uprobe.
 retval is the return value for the instrumented function and can only be accessed with a uretprobe.
+**Note**: When tracing some languages, like C++, `arg0` and even `arg1` may refer to runtime internals such as the current object instance (`this`) and/or the eventual return value for large returned objects where copy elision is used.
+This will push the actual function arguments to possibly start at `arg1` or `arg2` - the only way to know is to experiment.
 
 ```
 uprobe:/bin/bash:readline { printf("arg0: %d\n", arg0); }
@@ -1619,7 +1646,8 @@ Pointers in bpftrace are similar to those found in `C`.
 
 `C` like structs are supported by bpftrace.
 Fields are accessed with the `.` operator.
-Fields of a pointer to a struct can be accessed with the `\->` operator.
+If the `.` is used on a pointer, it is automatically dereferenced.
+The legacy `->` operator may be used, but is purely an alias for the `.` operator.
 
 Custom structs can be defined in the preamble.
 
@@ -1635,7 +1663,7 @@ kprobe:dummy {
   $ptr = (struct MyStruct *) arg0;
   $st = *$ptr;
   print($st.a);
-  print($ptr->a);
+  print($ptr.a);
 }
 ```
 
@@ -1719,7 +1747,7 @@ Array casting allows seamless comparison of such representations:
 
 ```
 fentry:tcp_connect {
-    if (args->sk->__sk_common.skc_daddr == (uint32)pton("127.0.0.1"))
+    if (args.sk.__sk_common.skc_daddr == (uint32)pton("127.0.0.1"))
         ...
 }
 ```
@@ -2003,9 +2031,9 @@ end {
 }
 ```
 
-### PER_CPU types
+### PERCPU types
 
-For bpftrace PER_CPU types (search this document for "PER_CPU"), you may coerce
+For bpftrace PERCPU map types (e.g., those created by using [`count()`](stdlib.md#count) or [`sum()`](stdlib.md#sum)) you may coerce
 (and thus force a more expensive synchronous read) the type to an integer using
 a cast or by doing a comparison. This is useful for when you need an integer
 during comparisons, `printf()`, or other.

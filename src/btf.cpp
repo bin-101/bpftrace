@@ -423,8 +423,11 @@ SizedType BTF::get_stype(const BTFId &btf_id, bool resolve_structs)
   auto stype = CreateNone();
 
   if (btf_is_int(t)) {
-    stype = CreateInteger(btf_int_bits(t),
-                          btf_int_encoding(t) & BTF_INT_SIGNED);
+    auto encoding = btf_int_encoding(t);
+    if (encoding & BTF_INT_BOOL) {
+      return CreateBool();
+    }
+    stype = CreateInteger(btf_int_bits(t), encoding & BTF_INT_SIGNED);
   } else if (btf_is_enum(t)) {
     stype = CreateInteger(t->size * 8, false);
   } else if (btf_is_composite(t)) {
@@ -503,9 +506,10 @@ std::shared_ptr<Struct> BTF::resolve_args(std::string_view func,
 
   const struct btf_param *p = btf_params(t);
   __u16 vlen = btf_vlen(t);
-  if (vlen >= arch::Host::arguments().size()) {
-    err = "functions with more than 6 parameters are "
-          "not supported.";
+  if (vlen > arch::Host::arguments().size()) {
+    err = "functions with more than " +
+          std::to_string(arch::Host::arguments().size()) +
+          " parameters are not supported.";
     return nullptr;
   }
 
@@ -582,7 +586,7 @@ std::string BTF::get_all_funcs_from_btf(const BTFObj &btf_obj) const
     if (bpftrace_ && !bpftrace_->is_traceable_func(func_name))
       continue;
 
-    if (btf_vlen(t) >= arch::Host::arguments().size())
+    if (btf_vlen(t) > arch::Host::arguments().size())
       continue;
 
     funcs += btf_obj.name + ":" + func_name + "\n";
@@ -623,7 +627,7 @@ std::string BTF::get_all_raw_tracepoints_from_btf(const BTFObj &btf_obj) const
       break;
     }
 
-    if (btf_vlen(t) >= arch::Host::arguments().size())
+    if (btf_vlen(t) > arch::Host::arguments().size())
       continue;
 
     bool found = false;

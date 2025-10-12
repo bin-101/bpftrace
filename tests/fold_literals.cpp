@@ -18,7 +18,13 @@ void test(const std::string& input,
   BPFtrace& bpftrace = *mock_bpftrace;
 
   // The input provided here is embedded into an expression.
-  ast::ASTContext ast("stdin", "begin { " + input + " }");
+  std::string code;
+  if (input[input.size() - 1] == '}' || input[input.size() - 1] == ';') {
+    code = "begin { " + input + " exit(); }";
+  } else {
+    code = "begin { " + input + "; exit(); }";
+  }
+  ast::ASTContext ast("stdin", code);
   std::stringstream msg;
   msg << "\nInput:\n" << input << "\n\nOutput:\n";
 
@@ -390,13 +396,13 @@ TEST(fold_literals, binary)
   test("1 << 1", "int: 2 :: [int64]");
   test("1 << 2", "int: 4 :: [int64]");
   test("1 << 63", "int: 9223372036854775808 :: [uint64]");
-  test("1 << 64", "int: 1 :: [int64]"); // Wraps around, still signed
   test("0xff << 8", "int: 65280 :: [int64]");
   test("0xff << 56", "int: 18374686479671623680 :: [uint64]");
   test("-1 << 1", "negative int: -2");
   test("-1 << 63", "negative int: -9223372036854775808");
   test("0x7fffffffffffffff << 1", "int: 18446744073709551614 :: [uint64]");
   test("0x8000000000000000 << 1", "int: 0 :: [uint64]"); // Legal overflow
+  test_error("1 << 64", "overflow");
 
   test("8 >> 1", "int: 4 :: [int64]");
   test("8 >> 2", "int: 2 :: [int64]");
@@ -408,6 +414,7 @@ TEST(fold_literals, binary)
   test("-8 >> 2", "negative int: -2"); // Sign extension
   test("0x8000000000000000 >> 1", "int: 4611686018427387904 :: [uint64]");
   test("0x8000000000000000 >> 63", "int: 1 :: [uint64]");
+  test_error("1 >> 64", "overflow");
 
   test("true & true", "bool: true");
   test("true & false", "bool: false");
@@ -512,7 +519,7 @@ TEST(fold_literals, conditional)
   test_not("if (comptime 1) { }", "if");
   test_not("if (comptime -1) { }", "if");
   test_not("if (comptime 0) { }", "if");
-  test_not("if (comptime 1 + 1) { }", "if");
+  test_not("if comptime (1 + 1) { }", "if");
   test_not("if (comptime \"str\") { }", "if");
   test_not("if (comptime \"\") { }", "if");
   test_not("if (comptime true) { }", "if");
@@ -523,12 +530,12 @@ TEST(fold_literals, conditional)
 
 TEST(fold_literals, tuple_access)
 {
-  test_not("comptime (1,0).0", "tuple:");
-  test_not("comptime (1, 1 + 1).1", "tuple:");
+  test_not("comptime ((1,0).0)", "tuple:");
+  test_not("comptime ((1, 1 + 1).1)", "tuple:");
   // This cannot be evaluated.
-  test_error("comptime ($x, 1 + 1).0", "comptime");
+  test_error("comptime (($x, 1 + 1).0)", "comptime");
   // Left as is.
-  test("comptime (1,0).2", ".\n   tuple:"); // bad access
+  test("comptime ((1,0).2)", ".\n   tuple:"); // bad access
   test("$x = (1,0); $x.0",
        "=\n   variable: $x\n   tuple:\n    int: 1 :: [int64]\n    int: 0 :: "
        "[int64]\n  .\n   variable: $x"); // variable tuple
@@ -544,8 +551,8 @@ TEST(fold_literals, comptime)
 {
   // This are temporary restrictions, but enough that we error when we hit a
   // variable or map as part of a comptime expression.
-  test_error("$x = 0; comptime $x + 1", "variable");
-  test_error("@x = 0; comptime @x + 1", "map");
+  test_error("$x = 0; comptime ($x + 1)", "variable");
+  test_error("@x = 0; comptime (@x + 1)", "map");
 }
 
 } // namespace bpftrace::test::fold_literals

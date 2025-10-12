@@ -9,15 +9,33 @@ and this project adheres to
 ## Unreleased
 
 #### Breaking Changes
+- `exit()` is no longer allowed inside loops. `return` was always disallowed, and `exit()` implicitly returns, which may result in undefined behavior.
+  - [#4587](https://github.com/bpftrace/bpftrace/pull/4587)
+- Restrict bpftrace script licenses to those that are GPL compatible
+  - [#4677](https://github.com/bpftrace/bpftrace/pull/4677)
+- Remove the deprecated `sarg` builtin
+  - [#4686](https://github.com/bpftrace/bpftrace/pull/4686)
 #### Added
 - Add support for indexing string types
   - [#4540](https://github.com/bpftrace/bpftrace/pull/4540)
+- Automatic dereferencing is supported via `.`, now the preferred access operator
+  - [#4673](https://github.com/bpftrace/bpftrace/pull/4673)
 #### Changed
+- Apply `-B` buffering semantics to file outputs.
+  - [#4637](https://github.com/bpftrace/bpftrace/pull/4637)
+- Link against libbpf vendored from a submodule by default
+  - [#4688](https://github.com/bpftrace/bpftrace/pull/4688)
 #### Deprecated
 #### Removed
 - Drop support for LLVM 16
   - [#4534](https://github.com/bpftrace/bpftrace/pull/4534)
 #### Fixed
+- Improved tuple binop comparison
+  - [#4523](https://github.com/bpftrace/bpftrace/pull/4523)
+- Fix off-by-one for function argument size comparison
+  - [#4698](https://github.com/bpftrace/bpftrace/pull/4698)
+- Fix resolution of enum-typed tracepoint args
+  - [#4714](https://github.com/bpftrace/bpftrace/pull/4714)
 #### Security
 #### Docs
 #### Tools
@@ -27,6 +45,21 @@ and this project adheres to
   - [#4600](https://github.com/bpftrace/bpftrace/pull/4600)
 - oomkill.bt: support memory cgroup
   - [#4533](https://github.com/bpftrace/bpftrace/pull/4533)
+
+## [0.24.1] 2025-10-03
+
+#### Fixed
+- Fix missing location.hh build error on Alpine
+  - [#4635](https://github.com/bpftrace/bpftrace/pull/4635)
+- Fix build with gcc-16
+  - [#4614](https://github.com/bpftrace/bpftrace/pull/4614)
+- ast: Avoid undefined behavior in literal folding
+  - [#4649](https://github.com/bpftrace/bpftrace/pull/4649)
+- Fix missing map key buffers for map aggregate functions
+  - [#4670](https://github.com/bpftrace/bpftrace/pull/4670)
+#### Docs
+- Fix docs for PERCPU map types
+  - [#4646](https://github.com/bpftrace/bpftrace/pull/4646)
 
 ## [0.24.0] 2025-09-17
 
@@ -143,6 +176,8 @@ and this project adheres to
   - [#4367](https://github.com/bpftrace/bpftrace/pull/4367)
 - Make probe provider names case insensitive
   - [#4371](https://github.com/bpftrace/bpftrace/pull/4371)
+- If, for, while and unroll statements can have omitted parentheses for unary expressions
+  - [#4503](https://github.com/bpftrace/bpftrace/pull/4503)
 #### Deprecated
 #### Removed
 #### Fixed

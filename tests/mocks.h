@@ -166,20 +166,6 @@ public:
     has_loop_ = std::make_optional<bool>(has_features);
   };
 
-  void add_to_available_kernel_funcs(Kfunc kfunc, bool available)
-  {
-    available_kernel_funcs_.emplace(kfunc, available);
-  }
-
-  bool has_kernel_func(Kfunc kfunc) override
-  {
-    auto find_kfunc = available_kernel_funcs_.find(kfunc);
-    if (find_kfunc != available_kernel_funcs_.end())
-      return find_kfunc->second;
-
-    return false;
-  }
-
   bool has_iter(std::string name __attribute__((unused))) override
   {
     return has_features_;
@@ -241,7 +227,5 @@ public:
                                               bool has_uprobe_multi));
 #pragma GCC diagnostic pop
 };
-
-std::unique_ptr<MockUSDTHelper> get_mock_usdt_helper(int num_locations);
 
 } // namespace bpftrace::test

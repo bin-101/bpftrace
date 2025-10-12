@@ -15,8 +15,8 @@
 
 #include "ast/ast.h"
 #include "ast/pass_manager.h"
+#include "ast/passes/ap_expansion.h"
 #include "ast/passes/clang_parser.h"
-#include "ast/passes/probe_expansion.h"
 #include "attached_probe.h"
 #include "bpfbytecode.h"
 #include "bpffeature.h"
@@ -117,8 +117,7 @@ public:
   virtual int add_probe(const ast::AttachPoint &ap,
                         const ast::Probe &p,
                         ast::ExpansionType expansion,
-                        std::set<std::string> expanded_funcs,
-                        int usdt_location_idx = 0);
+                        std::set<std::string> expanded_funcs);
   Probe generateWatchpointSetupProbe(const ast::AttachPoint &ap,
                                      const ast::Probe &probe);
   int num_probes() const;
@@ -269,8 +268,7 @@ private:
   Probe generate_probe(const ast::AttachPoint &ap,
                        const ast::Probe &p,
                        ast::ExpansionType expansion,
-                       std::set<std::string> expanded_funcs,
-                       int usdt_location_idx = 0);
+                       std::set<std::string> expanded_funcs);
   bool has_iter_ = false;
   struct ring_buffer *ringbuf_ = nullptr;
   struct perf_buffer *skb_perfbuf_ = nullptr;

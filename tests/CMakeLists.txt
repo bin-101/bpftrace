@@ -28,7 +28,8 @@ endif()
 add_executable(bpftrace_test
   arch.cpp
   async_action.cpp
-  attachpoint_parser.cpp
+  ast.cpp
+  attachpoint_passes.cpp
   bpfbytecode.cpp
   bpftrace.cpp
   btf.cpp
@@ -37,6 +38,7 @@ add_executable(bpftrace_test
   named_param.cpp
   config.cpp
   collect_nodes.cpp
+  control_flow_analyser.cpp
   deprecated.cpp
   field_analyser.cpp
   fold_literals.cpp
@@ -53,17 +55,17 @@ add_executable(bpftrace_test
   output.cpp
   parser.cpp
   portability_analyser.cpp
-  probe_expansion.cpp
+  ap_expansion.cpp
   procmon.cpp
   probe.cpp
   config_analyser.cpp
   pass_manager.cpp
   pid_filter_pass.cpp
+  probe_expansion.cpp
   recursion_check.cpp
   resource_analyser.cpp
   result.cpp
   required_resources.cpp
-  return_path_analyser.cpp
   scopeguard.cpp
   semantic_analyser.cpp
   temp.cpp
@@ -92,6 +94,11 @@ target_compile_definitions(bpftrace_test PRIVATE ${BPFTRACE_FLAGS})
 if(BUILD_ASAN)
   target_compile_options(bpftrace_test PUBLIC "-fsanitize=address")
   target_link_options(bpftrace_test PUBLIC "-fsanitize=address")
+endif()
+
+if(BUILD_UBSAN)
+  target_compile_options(bpftrace_test PUBLIC "-fsanitize=undefined")
+  target_link_options(bpftrace_test PUBLIC "-fsanitize=undefined")
 endif()
 
 # bpftrace tests require (at minimum) version 1.11.

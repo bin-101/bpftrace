@@ -9,7 +9,6 @@ target_link_libraries(ast_defs util)
 
 add_library(ast STATIC
   async_event_types.cpp
-  attachpoint_parser.cpp
   codegen_helper.cpp
   diagnostic.cpp
   dibuilderbpf.cpp
@@ -17,6 +16,8 @@ add_library(ast STATIC
   pass_manager.cpp
   signal.cpp
 
+  passes/ap_expansion.cpp
+  passes/attachpoint_passes.cpp
   passes/builtins.cpp
   passes/c_macro_expansion.cpp
   passes/clang_parser.cpp
@@ -24,6 +25,7 @@ add_library(ast STATIC
   passes/named_param.cpp
   passes/codegen_resources.cpp
   passes/config_analyser.cpp
+  passes/control_flow_analyser.cpp
   passes/deprecated.cpp
   passes/field_analyser.cpp
   passes/fold_literals.cpp
@@ -38,9 +40,9 @@ add_library(ast STATIC
   passes/probe_prune.cpp
   passes/resource_analyser.cpp
   passes/semantic_analyser.cpp
+  passes/simplify_types.cpp
   passes/codegen_llvm.cpp
   passes/resolve_imports.cpp
-  passes/return_path_analyser.cpp
   passes/recursion_check.cpp
   passes/type_system.cpp
   passes/unstable_feature.cpp

@@ -16,6 +16,7 @@
 #include "ast/passes/map_sugar.h"
 #include "ast/passes/named_param.h"
 #include "ast/passes/semantic_analyser.h"
+#include "ast/passes/simplify_types.h"
 #include "ast/passes/type_system.h"
 #include "ast/signal_bt.h"
 #include "btf/compat.h"
@@ -147,15 +148,13 @@ public:
                             MapMetadata &map_metadata,
                             NamedParamDefaults &named_param_defaults,
                             TypeMetadata &type_metadata,
-                            bool has_child = true,
-                            bool listing = false)
+                            bool has_child = true)
       : ctx_(ctx),
         bpftrace_(bpftrace),
         c_definitions_(c_definitions),
         map_metadata_(map_metadata),
         named_param_defaults_(named_param_defaults),
         type_metadata_(type_metadata),
-        listing_(listing),
         has_child_(has_child)
   {
   }
@@ -194,7 +193,6 @@ public:
   void visit(AssignVarStatement &assignment);
   void visit(VarDeclStatement &decl);
   void visit(Unroll &unroll);
-  void visit(AttachPoint &ap);
   void visit(Probe &probe);
   void visit(BlockExpr &block);
   void visit(Subprog &subprog);
@@ -208,7 +206,6 @@ private:
   MapMetadata &map_metadata_;
   NamedParamDefaults &named_param_defaults_;
   TypeMetadata &type_metadata_;
-  bool listing_;
 
   bool is_final_pass() const;
   bool is_first_pass() const;
@@ -262,7 +259,6 @@ private:
   void validate_map_key(const SizedType &key, Node &node);
   void resolve_struct_type(SizedType &type, Node &node);
 
-  void builtin_args_tracepoint(AttachPoint *attach_point, Builtin &builtin);
   ProbeType single_provider_type(Probe *probe);
   AddrSpace find_addrspace(ProbeType pt);
 
@@ -300,10 +296,7 @@ private:
   std::map<std::string, bpf_map_type> bpf_map_type_;
 
   uint32_t loop_depth_ = 0;
-  bool has_begin_probe_ = false;
-  bool has_end_probe_ = false;
   bool has_child_ = false;
-  std::unordered_map<std::string, Location> benchmark_locs_;
 };
 
 } // namespace
@@ -386,15 +379,6 @@ static const std::map<std::string, call_spec> CALL_SPEC = {
       .max_args=1,
       .arg_types={
         arg_type_spec{ .type=Type::integer } } } },
-  { "has_key",
-    { .min_args=2,
-      .max_args=2,
-      .discard_ret_warn = true,
-      .arg_types={
-        map_type_spec{},
-        map_key_spec{ .map_index=0 },
-      }
-    } },
   { "hist",
     { .min_args=3,
       .max_args=4,
@@ -429,12 +413,10 @@ static const std::map<std::string, call_spec> CALL_SPEC = {
     { .min_args=1,
       .max_args=1,
       .discard_ret_warn = true, } },
-  { "len",
+  { "stack_len",
     { .min_args=1,
       .max_args=1,
       .discard_ret_warn = true,
-      // This cannot be checked without overloading: it requires *either* a
-      // stack type, or a non-scalar map.
     } },
   { "lhist",
     { .min_args=6,
@@ -574,12 +556,6 @@ static const std::map<std::string, call_spec> CALL_SPEC = {
       .discard_ret_warn = true,
       .arg_types={
         arg_type_spec{ .skip_check=true },
-        arg_type_spec{ .type=Type::integer } } } },
-  { "strerror",
-    { .min_args=1,
-      .max_args=1,
-      .discard_ret_warn = true,
-      .arg_types={
         arg_type_spec{ .type=Type::integer } } } },
   { "strftime",
     { .min_args=2,
@@ -754,7 +730,6 @@ static bool IsValidVarDeclType(const SizedType &ty)
     case Type::record:
     case Type::tuple:
     case Type::cgroup_path_t:
-    case Type::strerror_t:
     case Type::none:
     case Type::timestamp_mode:
     case Type::boolean:
@@ -850,19 +825,6 @@ void SemanticAnalyser::visit(Identifier &identifier)
       identifier.addError() << "Unknown identifier: '" + identifier.ident + "'";
     }
   }
-}
-
-void SemanticAnalyser::builtin_args_tracepoint(AttachPoint *attach_point,
-                                               Builtin &builtin)
-{
-  std::string tracepoint_struct = TracepointFormatParser::get_struct_name(
-      *attach_point);
-  builtin.builtin_type = CreateRecord(
-      tracepoint_struct, bpftrace_.structs.Lookup(tracepoint_struct));
-  builtin.builtin_type.SetAS(
-      attach_point->target == "syscalls" ? AddrSpace::user : AddrSpace::kernel);
-  builtin.builtin_type.MarkCtxAccess();
-  builtin.builtin_type.is_tparg = true;
 }
 
 ProbeType SemanticAnalyser::single_provider_type(Probe *probe)
@@ -1075,32 +1037,6 @@ void SemanticAnalyser::visit(Builtin &builtin)
     }
     builtin.builtin_type = CreateUInt64();
     builtin.builtin_type.SetAS(addrspace);
-  } else if (!builtin.ident.compare(0, 4, "sarg") &&
-             builtin.ident.size() == 5 && builtin.ident.at(4) >= '0' &&
-             builtin.ident.at(4) <= '9') {
-    auto *probe = get_probe(builtin, builtin.ident);
-    if (probe == nullptr)
-      return;
-    ProbeType pt = probetype(probe->attach_points[0]->provider);
-    AddrSpace addrspace = find_addrspace(pt);
-    for (auto *attach_point : probe->attach_points) {
-      ProbeType type = probetype(attach_point->provider);
-      if (type != ProbeType::kprobe && type != ProbeType::uprobe)
-        builtin.addError()
-            << "The " + builtin.ident
-            << " builtin can only be used with 'kprobes' and 'uprobes' probes";
-      if (is_final_pass() &&
-          (attach_point->address != 0 || attach_point->func_offset != 0)) {
-        // If sargX values are needed when using an offset, they can be stored
-        // in a map when entering the function and then referenced from an
-        // offset-based probe
-        builtin.addWarning()
-            << "Using an address offset with the sargX built-in can"
-               "lead to unexpected behavior ";
-      }
-    }
-    builtin.builtin_type = CreateUInt64();
-    builtin.builtin_type.SetAS(addrspace);
   } else if (builtin.ident == "__builtin_probe") {
     auto *probe = get_probe(builtin, builtin.ident);
     if (probe == nullptr)
@@ -1131,19 +1067,23 @@ void SemanticAnalyser::visit(Builtin &builtin)
       ProbeType type = probetype(attach_point->provider);
 
       if (type == ProbeType::tracepoint) {
-        builtin_args_tracepoint(attach_point, builtin);
+        std::string tracepoint_struct = TracepointFormatParser::get_struct_name(
+            *attach_point);
+        builtin.builtin_type = CreateRecord(
+            tracepoint_struct, bpftrace_.structs.Lookup(tracepoint_struct));
+        builtin.builtin_type.SetAS(attach_point->target == "syscalls"
+                                       ? AddrSpace::user
+                                       : AddrSpace::kernel);
+        builtin.builtin_type.MarkCtxAccess();
+        break;
       }
     }
 
     ProbeType type = single_provider_type(probe);
+    assert(type != ProbeType::invalid);
 
-    if (type == ProbeType::invalid) {
-      builtin.addError()
-          << "The args builtin can only be used within the context of a single "
-             "probe type, e.g. \"probe1 {args}\" is valid while "
-             "\"probe1,probe2 {args}\" is not.";
-    } else if (type == ProbeType::fentry || type == ProbeType::fexit ||
-               type == ProbeType::uprobe || type == ProbeType::rawtracepoint) {
+    if (type == ProbeType::fentry || type == ProbeType::fexit ||
+        type == ProbeType::uprobe || type == ProbeType::rawtracepoint) {
       for (auto *attach_point : probe->attach_points) {
         if (attach_point->target == "bpf") {
           builtin.addError() << "The args builtin cannot be used for "
@@ -1171,8 +1111,6 @@ void SemanticAnalyser::visit(Builtin &builtin)
                             "tracepoint/fentry/uprobe probes ("
                          << type << " used here)";
     }
-  } else if (builtin.ident == "__builtin_session_is_return") {
-    builtin.builtin_type = CreateBool();
   } else {
     builtin.addError() << "Unknown builtin variable: '" << builtin.ident << "'";
   }
@@ -1223,6 +1161,23 @@ void SemanticAnalyser::visit(Call &call)
 
   if (!check_call(call)) {
     return;
+  }
+
+  if (call.func == "len" || call.func == "delete" || call.func == "has_key") {
+    // N.B. this should always be true at this point
+    if (auto *map = call.vargs.at(0).as<Map>()) {
+      if (map_metadata_.bad_scalar_call.contains(map)) {
+        map->addError()
+            << "call to " << call.func
+            << "() expects a map with explicit keys (non-scalar map)";
+        return;
+      } else if (map_metadata_.bad_indexed_call.contains(map)) {
+        map->addError()
+            << "call to " << call.func
+            << "() expects a map without explicit keys (scalar map)";
+        return;
+      }
+    }
   }
 
   if (call.func == "hist") {
@@ -1362,8 +1317,6 @@ void SemanticAnalyser::visit(Call &call)
     call.return_type = CreateStats(true);
   } else if (call.func == "delete") {
     call.return_type = CreateUInt8();
-  } else if (call.func == "has_key") {
-    call.return_type = CreateBool();
   } else if (call.func == "str") {
     auto &arg = call.vargs.at(0);
     const auto &t = arg.type();
@@ -1710,8 +1663,8 @@ void SemanticAnalyser::visit(Call &call)
     // Leave as `none`.
   } else if (call.func == "zero") {
     // Leave as `none`.
-  } else if (call.func == "len") {
-    if (!call.vargs.at(0).is<Map>() && !call.vargs.at(0).type().IsStack()) {
+  } else if (call.func == "stack_len") {
+    if (!call.vargs.at(0).type().IsStack()) {
       call.addError() << "len() expects a map or stack to be provided";
     }
     call.return_type = CreateInt64();
@@ -1796,8 +1749,6 @@ void SemanticAnalyser::visit(Call &call)
         call.addError() << "The path function can only be used with "
                         << "'fentry', 'fexit', 'iter' probes";
     }
-  } else if (call.func == "strerror") {
-    call.return_type = CreateStrerror();
   } else if (call.func == "strncmp") {
     if (!call.vargs.at(2).is<Integer>()) {
       call.addError() << "Builtin strncmp requires a non-negative literal";
@@ -2253,6 +2204,14 @@ void SemanticAnalyser::visit(MapDeclStatement &decl)
 
 void SemanticAnalyser::visit(Map &map)
 {
+  if (map_metadata_.bad_indexed_access.contains(&map)) {
+    map.addError()
+        << map.ident
+        << " used as a map without an explicit key (scalar map), previously "
+           "used with an explicit key (non-scalar map)";
+    return;
+  }
+
   auto val = map_val_.find(map.ident);
   if (val != map_val_.end()) {
     map.value_type = val->second;
@@ -2677,7 +2636,7 @@ void SemanticAnalyser::visit(Binop &binop)
   }
   // Compare type here, not the sized type as we it needs to work on strings
   // of different lengths
-  else if (lht.GetTy() != rht.GetTy()) {
+  else if (!lht.IsSameType(rht)) {
     auto &err = binop.addError();
     err << "Type mismatch for '" << opstr(binop) << "': comparing " << lht
         << " with " << rht;
@@ -2694,7 +2653,10 @@ void SemanticAnalyser::visit(Binop &binop)
 
 void SemanticAnalyser::visit(Unop &unop)
 {
-  if (unop.op == Operator::INCREMENT || unop.op == Operator::DECREMENT) {
+  if (unop.op == Operator::PRE_INCREMENT ||
+      unop.op == Operator::PRE_DECREMENT ||
+      unop.op == Operator::POST_INCREMENT ||
+      unop.op == Operator::POST_DECREMENT) {
     // Handle ++ and -- before visiting unop.expr, because these
     // operators should be able to work with undefined maps.
     if (auto *acc = unop.expr.as<MapAccess>()) {
@@ -2715,8 +2677,10 @@ void SemanticAnalyser::visit(Unop &unop)
 
   auto valid_ptr_op = false;
   switch (unop.op) {
-    case Operator::INCREMENT:
-    case Operator::DECREMENT:
+    case Operator::PRE_INCREMENT:
+    case Operator::PRE_DECREMENT:
+    case Operator::POST_INCREMENT:
+    case Operator::POST_DECREMENT:
     case Operator::MUL:
       valid_ptr_op = true;
       break;
@@ -2851,32 +2815,21 @@ void SemanticAnalyser::visit(Unroll &unroll)
 
 void SemanticAnalyser::visit(Jump &jump)
 {
-  switch (jump.ident) {
-    case JumpType::RETURN:
-      if (jump.return_value) {
-        visit(jump.return_value);
+  if (jump.ident == JumpType::RETURN) {
+    visit(jump.return_value);
+    if (auto *subprog = dynamic_cast<Subprog *>(top_level_node_)) {
+      const auto &ty = subprog->return_type->type();
+      if (is_final_pass() && !ty.IsNoneTy() &&
+          (ty.IsVoidTy() != !jump.return_value.has_value() ||
+           (jump.return_value.has_value() &&
+            jump.return_value->type() != ty))) {
+        jump.addError() << "Function " << subprog->name << " is of type " << ty
+                        << ", cannot return "
+                        << (jump.return_value.has_value()
+                                ? jump.return_value->type()
+                                : CreateVoid());
       }
-      if (auto *subprog = dynamic_cast<Subprog *>(top_level_node_)) {
-        const auto &ty = subprog->return_type->type();
-        if (is_final_pass() && !ty.IsNoneTy() &&
-            (ty.IsVoidTy() != !jump.return_value.has_value() ||
-             (jump.return_value.has_value() &&
-              jump.return_value->type() != ty))) {
-          jump.addError() << "Function " << subprog->name << " is of type "
-                          << ty << ", cannot return "
-                          << (jump.return_value.has_value()
-                                  ? jump.return_value->type()
-                                  : CreateVoid());
-        }
-      }
-      break;
-    case JumpType::BREAK:
-    case JumpType::CONTINUE:
-      if (!in_loop())
-        jump.addError() << opstr(jump) << " used outside of a loop";
-      break;
-    default:
-      jump.addError() << "Unknown jump: '" << opstr(jump) << "'";
+    }
   }
 }
 
@@ -2897,6 +2850,11 @@ void SemanticAnalyser::visit(For &f)
   if (auto *map = f.iterable.as<Map>()) {
     if (!is_first_pass() && !map_val_.contains(map->ident)) {
       map->addError() << "Undefined map: " << map->ident;
+    }
+    if (map_metadata_.bad_iterator.contains(map)) {
+      map->addError() << map->ident
+                      << " has no explicit keys (scalar map), and "
+                         "cannot be used for iteration";
     }
   }
 
@@ -2997,7 +2955,6 @@ void SemanticAnalyser::visit(For &f)
     if (!map->type().IsMapIterableTy()) {
       map->addError() << "Loop expression does not support type: "
                       << map->type();
-      return;
     }
   } else if (auto *range = f.iterable.as<Range>()) {
     if (is_final_pass()) {
@@ -3011,18 +2968,9 @@ void SemanticAnalyser::visit(For &f)
     }
   }
 
-  // Validate body. We may relax this in the future.
-  CollectNodes<Jump> jumps;
-  jumps.visit(f.block);
-  for (const Jump &n : jumps.nodes()) {
-    if (n.ident == JumpType::RETURN) {
-      n.addError() << "'" << opstr(n)
-                   << "' statement is not allowed in a for-loop";
-    }
-  }
-
-  if (!ctx_.diagnostics().ok())
+  if (!ctx_.diagnostics().ok()) {
     return;
+  }
 
   // Collect a list of unique variables which are referenced in the loop's
   // body and declared before the loop. These will be passed into the loop
@@ -3111,6 +3059,19 @@ void SemanticAnalyser::visit(For &f)
 void SemanticAnalyser::visit(FieldAccess &acc)
 {
   visit(acc.expr);
+
+  // FieldAccesses will automatically resolve through any number of pointer
+  // dereferences. For now, we inject the `Unop` operator directly, as codegen
+  // stores the underlying structs as pointers anyways. In the future, we will
+  // likely want to do this in a different way if we are tracking l-values.
+  while (acc.expr.type().IsPtrTy()) {
+    auto *unop = ctx_.make_node<Unop>(acc.expr,
+                                      Operator::MUL,
+                                      Location(acc.expr.node().loc));
+    acc.expr.value = unop;
+    visit(acc.expr);
+  }
+
   const SizedType &type = acc.expr.type();
 
   if (type.IsPtrTy()) {
@@ -3150,75 +3111,57 @@ void SemanticAnalyser::visit(FieldAccess &acc)
     return;
   }
 
-  std::map<std::string, std::shared_ptr<const Struct>> structs;
+  std::string cast_type = type.GetName();
+  const auto &record = type.GetStruct();
 
-  if (type.is_tparg) {
-    auto *probe = get_probe(acc);
-    if (probe == nullptr)
-      return;
-
-    for (AttachPoint *attach_point : probe->attach_points) {
-      if (probetype(attach_point->provider) != ProbeType::tracepoint) {
-        // The args builtin can only be used with tracepoint
-        // an error message is already generated in visit(Builtin)
-        // just continue semantic analysis
-        continue;
-      }
-
-      std::string tracepoint_struct = TracepointFormatParser::get_struct_name(
-          *attach_point);
-      structs[tracepoint_struct] =
-          bpftrace_.structs.Lookup(tracepoint_struct).lock();
-    }
+  if (!record->HasField(acc.field)) {
+    acc.addError() << "Struct/union of type '" << cast_type
+                   << "' does not contain " << "a field named '" << acc.field
+                   << "'";
   } else {
-    structs[type.GetName()] = type.GetStruct();
-  }
+    const auto &field = record->GetField(acc.field);
 
-  for (auto it : structs) {
-    std::string cast_type = it.first;
-    const auto record = it.second;
-    if (!record->HasField(acc.field)) {
-      acc.addError() << "Struct/union of type '" << cast_type
-                     << "' does not contain " << "a field named '" << acc.field
-                     << "'";
-    } else {
-      const auto &field = record->GetField(acc.field);
-
-      if (field.type.IsPtrTy()) {
-        const auto &tags = field.type.GetBtfTypeTags();
-        // Currently only "rcu" is safe. "percpu", for example, requires
-        // special unwrapping with `bpf_per_cpu_ptr` which is not yet
-        // supported.
-        static const std::string_view allowed_tag = "rcu";
-        for (const auto &tag : tags) {
-          if (tag != allowed_tag) {
-            acc.addError() << "Attempting to access pointer field '"
-                           << acc.field
-                           << "' with unsupported tag attribute: " << tag;
-          }
+    if (field.type.IsPtrTy()) {
+      const auto &tags = field.type.GetBtfTypeTags();
+      // Currently only "rcu" is safe. "percpu", for example, requires
+      // special unwrapping with `bpf_per_cpu_ptr` which is not yet
+      // supported.
+      static const std::string_view allowed_tag = "rcu";
+      for (const auto &tag : tags) {
+        if (tag != allowed_tag) {
+          acc.addError() << "Attempting to access pointer field '" << acc.field
+                         << "' with unsupported tag attribute: " << tag;
         }
       }
-
-      acc.field_type = field.type;
-      if (acc.expr.type().IsCtxAccess() &&
-          (acc.field_type.IsArrayTy() || acc.field_type.IsRecordTy())) {
-        // e.g., ((struct bpf_perf_event_data*)ctx)->regs.ax
-        acc.field_type.MarkCtxAccess();
-      }
-      acc.field_type.is_internal = type.is_internal;
-      acc.field_type.SetAS(acc.expr.type().GetAS());
-
-      // The kernel uses the first 8 bytes to store `struct pt_regs`. Any
-      // access to the first 8 bytes results in verifier error.
-      if (type.is_tparg && field.offset < 8)
-        acc.addError()
-            << "BPF does not support accessing common tracepoint fields";
     }
+
+    acc.field_type = field.type;
+    if (acc.expr.type().IsCtxAccess() &&
+        (acc.field_type.IsArrayTy() || acc.field_type.IsRecordTy())) {
+      // e.g., ((struct bpf_perf_event_data*)ctx)->regs.ax
+      acc.field_type.MarkCtxAccess();
+    }
+    acc.field_type.is_internal = type.is_internal;
+    acc.field_type.SetAS(acc.expr.type().GetAS());
+
+    // The kernel uses the first 8 bytes to store `struct pt_regs`. Any
+    // access to the first 8 bytes results in verifier error.
+    if (TracepointFormatParser::is_tracepoint_struct(type.GetName()) &&
+        field.offset < 8)
+      acc.addError()
+          << "BPF does not support accessing common tracepoint fields";
   }
 }
 
 void SemanticAnalyser::visit(MapAccess &acc)
 {
+  if (map_metadata_.bad_scalar_access.contains(acc.map)) {
+    acc.addError() << acc.map->ident
+                   << " used as a map with an explicit key (non-scalar map), "
+                      "previously used without an explicit key (scalar map)";
+    return;
+  }
+
   visit(acc.map);
   visit(acc.key);
   reconcile_map_key(acc.map, acc.key);
@@ -3404,6 +3347,7 @@ void SemanticAnalyser::visit(Expression &expr)
   // Visit and fold all other values.
   Visitor<SemanticAnalyser>::visit(expr);
   fold(ctx_, expr);
+  simplify(ctx_, expr);
 
   // Inline specific constant expressions.
   if (auto *szof = expr.as<Sizeof>()) {
@@ -3425,9 +3369,12 @@ void SemanticAnalyser::visit(Expression &expr)
     if (!ty.IsNoneTy()) {
       // We currently lack a globally-unique enumeration of types. For
       // simplicity, just use the type string with a placeholder identifier.
-      auto *s = ctx_.make_node<String>(typestr(ty), Location(type_id->loc));
       auto *id = ctx_.make_node<Integer>(0, Location(type_id->loc));
-      expr.value = ctx_.make_node<Tuple>(ExpressionList{ s, id },
+      auto *base_ty = ctx_.make_node<String>(to_string(ty.GetTy()),
+                                             Location(type_id->loc));
+      auto *full_ty = ctx_.make_node<String>(typestr(ty),
+                                             Location(type_id->loc));
+      expr.value = ctx_.make_node<Tuple>(ExpressionList{ id, base_ty, full_ty },
                                          Location(type_id->loc));
     }
   }
@@ -3818,305 +3765,10 @@ void SemanticAnalyser::visit(VarDeclStatement &decl)
   variable_decls_[scope_stack_.back()].insert({ var_ident, decl });
 }
 
-void SemanticAnalyser::visit(AttachPoint &ap)
-{
-  if (ap.provider == "kprobe" || ap.provider == "kretprobe") {
-    if (ap.func.empty())
-      ap.addError() << "kprobes should be attached to a function";
-    if (is_final_pass()) {
-      // Warn if user tries to attach to a non-traceable function
-      if (bpftrace_.config_->missing_probes != ConfigMissingProbes::ignore &&
-          !util::has_wildcard(ap.func) &&
-          !bpftrace_.is_traceable_func(ap.func)) {
-        ap.addWarning() << ap.func
-                        << " is not traceable (either non-existing, inlined, "
-                           "or marked as "
-                           "\"notrace\"); attaching to it will likely fail";
-      }
-    }
-  } else if (ap.provider == "uprobe" || ap.provider == "uretprobe") {
-    if (ap.target.empty())
-      ap.addError() << ap.provider << " should have a target";
-    if (ap.func.empty() && ap.address == 0)
-      ap.addError() << ap.provider
-                    << " should be attached to a function and/or address";
-    if (!ap.lang.empty() && !is_supported_lang(ap.lang))
-      ap.addError() << "unsupported language type: " << ap.lang;
-
-    if (ap.provider == "uretprobe" && ap.func_offset != 0)
-      ap.addError() << "uretprobes can not be attached to a function offset";
-
-    auto get_paths = [&]() -> Result<std::vector<std::string>> {
-      const auto pid = bpftrace_.pid();
-      if (ap.target == "*") {
-        if (pid.has_value())
-          return util::get_mapped_paths_for_pid(*pid);
-        else
-          return util::get_mapped_paths_for_running_pids();
-      } else {
-        return util::resolve_binary_path(ap.target, pid);
-      }
-    };
-    auto paths = get_paths();
-    if (!paths) {
-      // There was an error during path resolution.
-      ap.addError() << "error finding uprobe target: " << paths.takeError();
-    } else {
-      switch (paths->size()) {
-        case 0:
-          ap.addError() << "uprobe target file '" << ap.target
-                        << "' does not exist or is not executable";
-          break;
-        case 1:
-          // Replace the glob at this stage only if this is *not* a wildcard,
-          // otherwise we rely on the probe matcher. This is not going through
-          // any interfaces that can be properly mocked.
-          if (ap.target.find("*") == std::string::npos)
-            ap.target = paths->front();
-          break;
-        default:
-          // If we are doing a PATH lookup (ie not glob), we follow shell
-          // behavior and take the first match.
-          // Otherwise we keep the target with glob, it will be expanded later
-          if (ap.target.find("*") == std::string::npos) {
-            ap.addWarning() << "attaching to uprobe target file '"
-                            << paths->front() << "' but matched "
-                            << std::to_string(paths->size()) << " binaries";
-            ap.target = paths->front();
-          }
-      }
-    }
-  } else if (ap.provider == "usdt") {
-    bpftrace_.has_usdt_ = true;
-    if (ap.func.empty())
-      ap.addError() << "usdt probe must have a target function or wildcard";
-
-    if (!ap.target.empty() &&
-        !(bpftrace_.pid().has_value() && util::has_wildcard(ap.target))) {
-      auto paths = util::resolve_binary_path(ap.target, bpftrace_.pid());
-      switch (paths.size()) {
-        case 0:
-          ap.addError() << "usdt target file '" << ap.target
-                        << "' does not exist or is not executable";
-          break;
-        case 1:
-          // See uprobe, above.
-          if (ap.target.find("*") == std::string::npos)
-            ap.target = paths.front();
-          break;
-        default:
-          // See uprobe, above.
-          if (ap.target.find("*") == std::string::npos) {
-            ap.addWarning() << "attaching to usdt target file '"
-                            << paths.front() << "' but matched "
-                            << std::to_string(paths.size()) << " binaries";
-            ap.target = paths.front();
-          }
-      }
-    }
-
-    const auto pid = bpftrace_.pid();
-    if (pid.has_value()) {
-      USDTHelper::probes_for_pid(*pid, bpftrace_.feature_->has_uprobe_multi());
-    } else if (ap.target == "*") {
-      USDTHelper::probes_for_all_pids(bpftrace_.feature_->has_uprobe_multi());
-    } else if (!ap.target.empty()) {
-      for (auto &path : util::resolve_binary_path(ap.target))
-        USDTHelper::probes_for_path(path,
-                                    bpftrace_.feature_->has_uprobe_multi());
-    } else {
-      ap.addError() << "usdt probe must specify at least path or pid to "
-                       "probe. To target "
-                       "all paths/pids set the path to '*'.";
-    }
-  } else if (ap.provider == "tracepoint") {
-    if (ap.target.empty() || ap.func.empty())
-      ap.addError() << "tracepoint probe must have a target";
-  } else if (ap.provider == "rawtracepoint") {
-    if (ap.func.empty())
-      ap.addError() << "rawtracepoint should be attached to a function";
-
-    if (!listing_ && !bpftrace_.has_btf_data()) {
-      ap.addError() << "rawtracepoints require kernel BTF. Try using a "
-                       "'tracepoint' instead.";
-    }
-
-  } else if (ap.provider == "profile") {
-    if (ap.target.empty())
-      ap.addError() << "profile probe must have unit of time";
-    else if (!listing_) {
-      if (!TIME_UNITS.contains(ap.target))
-        ap.addError() << ap.target << " is not an accepted unit of time";
-      if (!ap.func.empty())
-        ap.addError() << "profile probe must have an integer frequency";
-      else if (ap.freq <= 0)
-        ap.addError() << "profile frequency should be a positive integer";
-    }
-  } else if (ap.provider == "interval") {
-    if (ap.target.empty())
-      ap.addError() << "interval probe must have unit of time";
-    else if (!listing_) {
-      if (!TIME_UNITS.contains(ap.target))
-        ap.addError() << ap.target << " is not an accepted unit of time";
-      if (!ap.func.empty())
-        ap.addError() << "interval probe must have an integer frequency";
-      else if (ap.freq <= 0)
-        ap.addError() << "interval frequency should be a positive integer";
-    }
-  } else if (ap.provider == "software") {
-    if (ap.target.empty())
-      ap.addError() << "software probe must have a software event name";
-    else {
-      if (!util::has_wildcard(ap.target) && !ap.ignore_invalid) {
-        bool found = false;
-        for (const auto &probeListItem : SW_PROBE_LIST) {
-          if (ap.target == probeListItem.path ||
-              (!probeListItem.alias.empty() &&
-               ap.target == probeListItem.alias)) {
-            found = true;
-            break;
-          }
-        }
-        if (!found)
-          ap.addError() << ap.target << " is not a software probe";
-      } else if (!listing_) {
-        ap.addError() << "wildcards are not allowed for hardware probe type";
-      }
-    }
-    if (!ap.func.empty())
-      ap.addError() << "software probe can only have an integer count";
-    else if (ap.freq < 0)
-      ap.addError() << "software count should be a positive integer";
-  } else if (ap.provider == "watchpoint" || ap.provider == "asyncwatchpoint") {
-    if (!ap.func.empty()) {
-      if (!bpftrace_.pid().has_value() && !has_child_)
-        ap.addError() << "-p PID or -c CMD required for watchpoint";
-
-      if (ap.address >= static_cast<uint64_t>(arch::Host::arguments().size()))
-        ap.addError() << arch::Host::Machine << " doesn't support arg"
-                      << ap.address;
-    } else if (ap.provider == "asyncwatchpoint")
-      ap.addError() << ap.provider << " requires a function name";
-    else if (!ap.address)
-      ap.addError() << "watchpoint must be attached to a non-zero address";
-    if (ap.len != 1 && ap.len != 2 && ap.len != 4 && ap.len != 8)
-      ap.addError() << "watchpoint length must be one of (1,2,4,8)";
-    if (ap.mode.empty())
-      ap.addError() << "watchpoint mode must be combination of (r,w,x)";
-    std::ranges::sort(ap.mode);
-    for (const char c : ap.mode) {
-      if (c != 'r' && c != 'w' && c != 'x')
-        ap.addError() << "watchpoint mode must be combination of (r,w,x)";
-    }
-    for (size_t i = 1; i < ap.mode.size(); ++i) {
-      if (ap.mode[i - 1] == ap.mode[i])
-        ap.addError() << "watchpoint modes may not be duplicated";
-    }
-    const auto &modes = arch::Host::watchpoint_modes();
-    if (!modes.contains(ap.mode)) {
-      if (modes.empty()) {
-        // There are no valid modes.
-        ap.addError() << "watchpoints not supported";
-      } else {
-        // Build a suitable error with hint.
-        auto &err = ap.addError();
-        err << "invalid watchpoint mode: " << ap.mode;
-        err.addHint() << "supported modes: "
-                      << util::str_join(std::vector(modes.begin(), modes.end()),
-                                        ",");
-      }
-    }
-  } else if (ap.provider == "hardware") {
-    if (ap.target.empty())
-      ap.addError() << "hardware probe must have a hardware event name";
-    else {
-      if (!util::has_wildcard(ap.target) && !ap.ignore_invalid) {
-        bool found = false;
-        for (const auto &probeListItem : HW_PROBE_LIST) {
-          if (ap.target == probeListItem.path ||
-              (!probeListItem.alias.empty() &&
-               ap.target == probeListItem.alias)) {
-            found = true;
-            break;
-          }
-        }
-        if (!found)
-          ap.addError() << ap.target + " is not a hardware probe";
-      } else if (!listing_) {
-        ap.addError() << "wildcards are not allowed for hardware probe type";
-      }
-    }
-    if (!ap.func.empty())
-      ap.addError() << "hardware probe can only have an integer count";
-    else if (ap.freq < 0)
-      ap.addError() << "hardware frequency should be a positive integer";
-  } else if (ap.provider == "begin" || ap.provider == "end") {
-    if (!ap.target.empty() || !ap.func.empty())
-      ap.addError() << "begin/end probes should not have a target";
-    if (is_final_pass()) {
-      if (ap.provider == "begin") {
-        if (has_begin_probe_)
-          ap.addError() << "More than one begin probe defined";
-        has_begin_probe_ = true;
-      }
-      if (ap.provider == "end") {
-        if (has_end_probe_)
-          ap.addError() << "More than one end probe defined";
-        has_end_probe_ = true;
-      }
-    }
-  } else if (ap.provider == "self") {
-    if (ap.target == "signal") {
-      if (!SIGNALS.contains(ap.func))
-        ap.addError() << ap.func << " is not a supported signal";
-      return;
-    }
-    ap.addError() << ap.target << " is not a supported trigger";
-  } else if (ap.provider == "bench") {
-    if (ap.target.empty())
-      ap.addError() << "bench probes must have a name";
-    if (is_final_pass()) {
-      auto it = benchmark_locs_.find(ap.target);
-
-      if (it != benchmark_locs_.end()) {
-        auto &err = ap.addError();
-        err << "\"" + ap.target + "\""
-            << " was used as the name for more than one BENCH probe";
-        err.addContext(it->second) << "this is the other instance";
-      }
-
-      benchmark_locs_.emplace(ap.target, ap.loc);
-    }
-  } else if (ap.provider == "fentry" || ap.provider == "fexit") {
-    if (ap.func.empty())
-      ap.addError() << "fentry/fexit should specify a function";
-  } else if (ap.provider == "iter") {
-    if (!listing_ && !bpftrace_.btf_->get_all_iters().contains(ap.func)) {
-      ap.addError() << "iter " << ap.func
-                    << " not available for your kernel version.";
-    }
-
-    if (ap.func.empty())
-      ap.addError() << "iter should specify a iterator's name";
-  } else {
-    ap.addError() << "Invalid provider: '" << ap.provider << "'";
-  }
-}
-
 void SemanticAnalyser::visit(BlockExpr &block)
 {
   scope_stack_.push_back(&block);
-  for (size_t i = 0; i < block.stmts.size(); i++) {
-    auto &stmt = block.stmts.at(i);
-    visit(stmt);
-    if (is_final_pass()) {
-      auto *jump = stmt.as<Jump>();
-      if (jump && i < (block.stmts.size() - 1)) {
-        jump->addWarning() << "All code after a '" << opstr(*jump)
-                           << "' is unreachable.";
-      }
-    }
-  }
+  visit(block.stmts);
   visit(block.expr);
   scope_stack_.pop_back();
 }
@@ -4463,7 +4115,8 @@ void SemanticAnalyser::assign_map_type(Map &map,
 {
   const std::string &map_ident = map.ident;
 
-  if (type.IsRecordTy() && type.is_tparg) {
+  if (type.IsRecordTy() &&
+      TracepointFormatParser::is_tracepoint_struct(type.GetName())) {
     loc_node->addError() << "Storing tracepoint args in maps is not supported";
   }
 
@@ -4703,22 +4356,21 @@ void SemanticAnalyser::resolve_struct_type(SizedType &type, Node &node)
   }
 }
 
-Pass CreateSemanticPass(bool listing)
+Pass CreateSemanticPass()
 {
-  auto fn = [listing](ASTContext &ast,
-                      BPFtrace &b,
-                      CDefinitions &c_definitions,
-                      MapMetadata &mm,
-                      NamedParamDefaults &named_param_defaults,
-                      TypeMetadata &types) {
+  auto fn = [](ASTContext &ast,
+               BPFtrace &b,
+               CDefinitions &c_definitions,
+               MapMetadata &mm,
+               NamedParamDefaults &named_param_defaults,
+               TypeMetadata &types) {
     SemanticAnalyser semantics(ast,
                                b,
                                c_definitions,
                                mm,
                                named_param_defaults,
                                types,
-                               !b.cmd_.empty() || b.child_ != nullptr,
-                               listing);
+                               !b.cmd_.empty() || b.child_ != nullptr);
     semantics.analyse();
   };
 

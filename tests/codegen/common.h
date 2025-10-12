@@ -4,7 +4,8 @@
 #include <iostream>
 #include <regex>
 
-#include "ast/attachpoint_parser.h"
+#include "ast/passes/ap_expansion.h"
+#include "ast/passes/attachpoint_passes.h"
 #include "ast/passes/c_macro_expansion.h"
 #include "ast/passes/clang_build.h"
 #include "ast/passes/clang_parser.h"
@@ -32,8 +33,6 @@
 namespace bpftrace::test::codegen {
 
 #define NAME (::testing::UnitTest::GetInstance()->current_test_info()->name())
-
-class codegen_btf : public test_btf {};
 
 static std::string get_expected(const std::string &name)
 {
@@ -65,13 +64,18 @@ static void test(BPFtrace &bpftrace,
                 .put(ast)
                 .put(bpftrace)
                 .add(CreateParsePass())
+                .add(ast::CreateParseAttachpointsPass())
+                .add(ast::CreateCheckAttachpointsPass())
                 .add(ast::CreateResolveImportsPass())
+                .add(ast::CreatePidFilterPass())
+                .add(ast::CreateControlFlowPass())
                 .add(ast::CreateImportInternalScriptsPass())
                 .add(ast::CreateMacroExpansionPass())
-                .add(ast::CreateParseAttachpointsPass())
+                .add(ast::CreateApExpansionPass())
                 .add(ast::CreateProbeExpansionPass())
                 .add(ast::CreateFieldAnalyserPass())
                 .add(ast::CreateClangParsePass())
+                .add(ast::CreateProbeExpansionPass({ProbeType::tracepoint}))
                 .add(ast::CreateCMacroExpansionPass())
                 .add(ast::CreateFoldLiteralsPass())
                 .add(ast::CreateMapSugarPass())
@@ -80,7 +84,6 @@ static void test(BPFtrace &bpftrace,
                 .add(ast::CreateClangBuildPass())
                 .add(ast::CreateTypeSystemPass())
                 .add(ast::CreateSemanticPass())
-                .add(ast::CreatePidFilterPass())
                 .add(ast::CreateRecursionCheckPass())
                 .add(ast::CreateSemanticPass())
                 .add(ast::CreateResourcePass())

@@ -673,6 +673,9 @@ Value *IRBuilderBPF::createScratchBuffer(std::string_view global_var_name,
   // The last level is either an array of bytes (e.g. for strings)
   // or a single value (e.g. for ints like the EVENT_LOSS_COUNTER)
   const auto global_name = std::string(global_var_name);
+  bpftrace_.resources.global_vars.check_index(global_name,
+                                              bpftrace_.resources,
+                                              key);
   auto sized_type = bpftrace_.resources.global_vars.get_sized_type(
       global_name, bpftrace_.resources, *bpftrace_.config_);
   auto *cpu_id = CreateGetCpuId(loc);
@@ -2169,7 +2172,7 @@ Value *IRBuilderBPF::CreateKFuncArg(Value *ctx,
                                     SizedType &type,
                                     std::string &name)
 {
-  assert(type.IsIntTy() || type.IsPtrTy());
+  assert(type.IsIntTy() || type.IsPtrTy() || type.IsBoolTy());
   Value *expr = CreateLoad(
       GetType(type),
       CreateSafeGEP(getInt64Ty(), ctx, getInt64(type.funcarg_idx)),
@@ -2623,6 +2626,12 @@ llvm::Value *IRBuilderBPF::CreateCheckedBinop(Binop &binop,
   auto *result = CreateLoad(getInt64Ty(), op_result);
   CreateLifetimeEnd(op_result);
   return result;
+}
+
+bool IRBuilderBPF::HasTerminator()
+{
+  BasicBlock *current_block = GetInsertBlock();
+  return current_block && current_block->getTerminator();
 }
 
 } // namespace bpftrace::ast

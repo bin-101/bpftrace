@@ -144,10 +144,11 @@ static Expression make_boolean(ASTContext &ast, T left, T right, Binop &op)
       break;
     case Operator::LNOT:
     case Operator::BNOT:
-    case Operator::INVALID:
     case Operator::ASSIGN:
-    case Operator::INCREMENT:
-    case Operator::DECREMENT:
+    case Operator::PRE_INCREMENT:
+    case Operator::PRE_DECREMENT:
+    case Operator::POST_INCREMENT:
+    case Operator::POST_DECREMENT:
       LOG(BUG) << "binary operator is not valid: " << static_cast<int>(op.op);
   }
 
@@ -248,17 +249,16 @@ static std::optional<std::variant<uint64_t, int64_t>> eval_binop(T left,
             res > static_cast<uint64_t>(right)) {
           return res;
         }
+        return std::nullopt;
       }
       if constexpr (std::is_same_v<T, int64_t>) {
         if ((left > 0 && right < 0) || (left < 0 && right > 0)) {
           return clamp(left + right);
         }
         if (left < 0 && right < 0) {
-          auto res = left + right;
-          if (res < left && res < right) {
-            return res;
-          }
-          return std::nullopt;
+          if (std::numeric_limits<int64_t>::min() - left > right)
+            return std::nullopt;
+          return left + right;
         }
       }
       return std::nullopt;
@@ -281,18 +281,15 @@ static std::optional<std::variant<uint64_t, int64_t>> eval_binop(T left,
       } else {
         if (right == 0) {
           return clamp(left);
-        } else if (right < 0) {
-          auto res = left - right;
-          if (res < left) {
-            return std::nullopt;
-          }
-          return clamp(res);
         } else {
-          auto res = left - right;
-          if (res > left) {
+          if (left > 0 && right < 0 &&
+              std::numeric_limits<int64_t>::max() - left < -right) {
+            return std::nullopt;
+          } else if (left < 0 && right > 0 &&
+                     std::numeric_limits<int64_t>::min() - left > -right) {
             return std::nullopt;
           }
-          return clamp(res);
+          return clamp(left - right);
         }
       }
     case Operator::MUL:
@@ -330,8 +327,15 @@ static std::optional<std::variant<uint64_t, int64_t>> eval_binop(T left,
     case Operator::BXOR:
       return clamp(left ^ right);
     case Operator::LEFT:
+      // Shifting negative amount of bits or more bits than the width of `left`
+      // (which is always 64 in our case) is undefined behavior in C++
+      if (right < 0 || right >= 64)
+        return std::nullopt;
       return clamp(left << right);
     case Operator::RIGHT:
+      // Same as above
+      if (right < 0 || right >= 64)
+        return std::nullopt;
       return clamp(left >> right);
     // Comparison operators are handled in `make_boolean` and checked in
     // `is_comparison_op`.
@@ -343,10 +347,11 @@ static std::optional<std::variant<uint64_t, int64_t>> eval_binop(T left,
     case Operator::GT:
     case Operator::LAND:
     case Operator::LOR:
-    case Operator::INVALID:
     case Operator::ASSIGN:
-    case Operator::INCREMENT:
-    case Operator::DECREMENT:
+    case Operator::PRE_INCREMENT:
+    case Operator::PRE_DECREMENT:
+    case Operator::POST_INCREMENT:
+    case Operator::POST_DECREMENT:
     case Operator::LNOT:
     case Operator::BNOT:
       break;
@@ -794,7 +799,7 @@ std::optional<Expression> LiteralFolder::visit(BlockExpr &expr)
   // We fold this only if the statement list is empty, and we find a literal
   // as the expression value. We should have recorded an error if there was an
   // attempt to access variables, calls, or generally do anything non-hermetic.
-  if (expr.stmts.empty() && expr.expr.is_literal()) {
+  if (expr.stmts.empty() && (expr.expr.is_literal() || expr.expr.is<Tuple>())) {
     return expr.expr;
   }
 
